@@ -1,9 +1,8 @@
 """Population-based training with generational evolution.
 
-Trains agents in generations: each generation runs a fixed number of episodes,
-then the best agents are promoted (frozen as static opponents) and the worst
-are demoted (removed from pool). New agents are added according to the
-curriculum schedule.
+Trains agents in generations: each generation runs episodes for ranking,
+then does actual gradient-based learning via SB3's train_on_env(),
+and finally promotes/demotes agents based on evaluation scores.
 """
 
 from __future__ import annotations
@@ -21,17 +20,21 @@ from hydra.training.trainer import Trainer
 
 logger = logging.getLogger("hydra.training.population")
 
+# Timesteps of SB3 gradient training per learning agent per generation
+_DEFAULT_TRAIN_TIMESTEPS = 500
+
 
 class PopulationTrainer:
     """Generational population-based training.
 
     Each generation:
-    1. Train all learning agents for N episodes
-    2. Evaluate all agents
-    3. Rank by evaluation performance
-    4. Promote top-K learning agents → static snapshots
-    5. Demote bottom-K static agents (remove from pool)
-    6. Apply curriculum adjustments to pool composition
+    1. Run multi-agent episodes for ranking + metric collection
+    2. Run SB3 gradient training on each learning agent (real weight updates)
+    3. Evaluate all agents individually
+    4. Rank by evaluation performance
+    5. Promote top-K learning agents -> static snapshots
+    6. Demote bottom-K static agents (remove from pool)
+    7. Apply curriculum adjustments to pool composition
     """
 
     def __init__(
@@ -46,6 +49,7 @@ class PopulationTrainer:
         top_k_promote: int = 2,
         bottom_k_demote: int = 1,
         checkpoint_dir: str = "checkpoints",
+        train_timesteps: int = _DEFAULT_TRAIN_TIMESTEPS,
     ):
         self.env = env
         self.pool = pool
@@ -57,6 +61,7 @@ class PopulationTrainer:
         self.top_k_promote = top_k_promote
         self.bottom_k_demote = bottom_k_demote
         self.checkpoint_dir = checkpoint_dir
+        self.train_timesteps = train_timesteps
 
         self._generation = 0
 
@@ -69,7 +74,7 @@ class PopulationTrainer:
             logger.info(f"=== Generation {self._generation}/{self.num_generations} ===")
             logger.info(f"Pool: {self.pool.size} agents ({len(self.pool.get_learning_agents())} learning)")
 
-            # 1. Train
+            # 1. Run multi-agent episodes (collect experience + metrics)
             trainer = Trainer(
                 env=self.env,
                 pool=self.pool,
@@ -80,21 +85,28 @@ class PopulationTrainer:
             )
 
             train_result = trainer.train_episodes(self.episodes_per_generation)
-            logger.info(f"Training: mean_reward={train_result['mean_reward']:.4f}")
+            logger.info(f"Multi-agent episodes: mean_reward={train_result['mean_reward']:.4f}")
 
-            # 2. Evaluate all agents individually
+            # 2. SB3 gradient training — real neural network learning
+            self._train_agents_on_env()
+
+            # 3. Evaluate all agents individually
             eval_scores = self._evaluate_agents()
 
-            # 3. Update rankings
+            # Log per-agent eval scores
+            for agent_name, score in eval_scores.items():
+                self.metrics.log_agent_eval(self._generation, agent_name, score)
+
+            # 4. Update rankings
             self.pool.update_rankings(eval_scores)
 
-            # 4. Promote top learning agents
+            # 5. Promote top learning agents
             promoted = self.pool.promote_top(self.top_k_promote)
 
-            # 5. Demote bottom static agents (keep pool size manageable)
+            # 6. Demote bottom static agents (keep pool size manageable)
             demoted = self.pool.demote_bottom(self.bottom_k_demote)
 
-            # 6. Apply curriculum
+            # 7. Apply curriculum
             self.curriculum.on_generation(self._generation, eval_scores)
 
             gen_result = {
@@ -123,6 +135,26 @@ class PopulationTrainer:
             "generations": generation_results,
             "final_rankings": dict(self.pool.get_ranked_agents()),
         }
+
+    def _train_agents_on_env(self) -> None:
+        """Run SB3 gradient-based training for each learning agent.
+
+        This is where actual neural network weight updates happen.
+        Each learning agent runs train_on_env() which calls SB3's learn()
+        method, performing real policy gradient descent.
+        """
+        for agent in self.pool.get_learning_agents():
+            if not hasattr(agent, "train_on_env"):
+                continue
+            try:
+                result = agent.train_on_env(self.env, total_timesteps=self.train_timesteps)
+                logger.info(
+                    f"  SB3 training '{agent.name}': "
+                    f"{self.train_timesteps} timesteps, "
+                    f"total={result.get('total_timesteps', 0):.0f}"
+                )
+            except Exception as e:
+                logger.warning(f"  SB3 training '{agent.name}' failed: {e}")
 
     def _evaluate_agents(self) -> dict[str, float]:
         """Evaluate each agent by running episodes with only that agent active."""

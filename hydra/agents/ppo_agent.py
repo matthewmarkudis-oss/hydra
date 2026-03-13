@@ -46,8 +46,9 @@ def _get_device(prefer_gpu: bool = True) -> str:
     if prefer_gpu:
         try:
             import torch_directml
+            torch_directml.device()  # verify it works
             return "dml"
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             pass
         try:
             import torch

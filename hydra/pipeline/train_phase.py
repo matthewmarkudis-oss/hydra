@@ -71,6 +71,10 @@ def run_training(
     # Metrics
     metrics = MetricsTracker(log_dir=tensorboard_dir)
 
+    # Each learning agent gets gradient training per generation.
+    # timesteps = episode_bars * episodes gives enough experience for SB3's learn().
+    train_timesteps = train_env.episode_bars * episodes_per_generation
+
     # Run population-based training
     pop_trainer = PopulationTrainer(
         env=train_env,
@@ -81,6 +85,7 @@ def run_training(
         top_k_promote=top_k_promote,
         bottom_k_demote=bottom_k_demote,
         checkpoint_dir=checkpoint_dir,
+        train_timesteps=train_timesteps,
     )
 
     results = pop_trainer.train()

@@ -153,6 +153,8 @@ class Trainer:
 
         summary = step_info.get("episode_summary", {})
         summary["update_metrics"] = update_metrics
+        summary["num_trades"] = step_info.get("num_trades", 0)
+        summary["total_transaction_costs"] = step_info.get("total_transaction_costs", 0.0)
         return total_reward, summary
 
     def evaluate(

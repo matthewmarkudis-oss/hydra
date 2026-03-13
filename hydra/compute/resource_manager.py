@@ -62,7 +62,7 @@ class ResourceManager:
             )
             logger.info(f"GPU detected: DirectML ({self.gpu_memory_limit_gb}GB limit)")
             return
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             pass
 
         # Try CUDA

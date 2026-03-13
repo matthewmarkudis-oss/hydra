@@ -1,7 +1,7 @@
 """TensorBoard-compatible metrics logging.
 
-Tracks per-agent rewards, losses, action distributions, and
-episode-level performance metrics.
+Tracks per-agent rewards, portfolio value, P&L, Sharpe ratio,
+drawdown, win rate — organized into layman-friendly categories.
 """
 
 from __future__ import annotations
@@ -16,7 +16,16 @@ logger = logging.getLogger("hydra.training.metrics")
 
 
 class MetricsTracker:
-    """Tracks and logs training metrics."""
+    """Tracks and logs training metrics to TensorBoard.
+
+    Dashboard categories (layman-friendly):
+      Performance/     — Portfolio value, P&L, total return
+      Risk/            — Drawdown, volatility, Sharpe ratio
+      Trading/         — Win rate, number of trades, transaction costs
+      Learning/        — Episode reward, policy loss, value loss
+      Agents/          — Per-agent comparison metrics
+      Population/      — Generation-level evolution stats
+    """
 
     def __init__(self, log_dir: str = "logs/tensorboard", use_tensorboard: bool = True):
         self._log_dir = Path(log_dir)
@@ -27,6 +36,9 @@ class MetricsTracker:
         self._episode_rewards: list[float] = []
         self._eval_rewards: list[float] = []
         self._episode_data: list[dict] = []
+        self._portfolio_values: list[float] = []
+        self._winning_episodes = 0
+        self._total_episodes = 0
 
         if use_tensorboard:
             self._init_tensorboard()
@@ -46,41 +58,105 @@ class MetricsTracker:
         """Log metrics for a training episode."""
         self._episode_rewards.append(reward)
         self._episode_data.append({"episode": episode, "reward": reward, **info})
+        self._total_episodes += 1
 
-        if self._writer:
-            self._writer.add_scalar("train/episode_reward", reward, episode)
+        # Extract episode summary from env
+        summary = info.get("episode_summary", {}) if isinstance(info, dict) else {}
 
-            # Log episode summary if available
-            summary = info.get("episode_summary", {}) if isinstance(info, dict) else {}
-            for key, value in summary.items():
-                if isinstance(value, (int, float)):
-                    self._writer.add_scalar(f"train/{key}", value, episode)
+        # Track wins (positive return episodes)
+        total_return = summary.get("total_return", 0.0)
+        if total_return > 0:
+            self._winning_episodes += 1
 
-            # Log per-agent update metrics
-            update_metrics = info.get("update_metrics", {})
-            for agent_name, metrics in update_metrics.items():
-                if isinstance(metrics, dict):
-                    for k, v in metrics.items():
-                        if isinstance(v, (int, float)):
-                            self._writer.add_scalar(
-                                f"agent/{agent_name}/{k}", v, episode
-                            )
+        final_value = summary.get("final_value", 0.0)
+        if final_value > 0:
+            self._portfolio_values.append(final_value)
+
+        if not self._writer:
+            return
+
+        # === Performance (How is my money doing?) ===
+        if final_value > 0:
+            self._writer.add_scalar("Performance/Portfolio Value ($)", final_value, episode)
+            pnl = final_value - 100_000.0  # assumes 100k starting
+            self._writer.add_scalar("Performance/Profit or Loss ($)", pnl, episode)
+        if total_return != 0:
+            self._writer.add_scalar("Performance/Return (%)", total_return * 100, episode)
+
+        # === Risk (How safe is my money?) ===
+        mdd = summary.get("max_drawdown", 0.0)
+        if mdd != 0:
+            self._writer.add_scalar("Risk/Max Drawdown (%)", mdd * 100, episode)
+        sharpe = summary.get("sharpe_ratio", 0.0)
+        if sharpe != 0:
+            self._writer.add_scalar("Risk/Sharpe Ratio", sharpe, episode)
+        sortino = summary.get("sortino_ratio", 0.0)
+        if sortino != 0:
+            self._writer.add_scalar("Risk/Sortino Ratio", sortino, episode)
+        vol = summary.get("volatility", 0.0)
+        if vol != 0:
+            self._writer.add_scalar("Risk/Volatility", vol, episode)
+
+        # === Trading (What is the agent doing?) ===
+        num_trades = info.get("num_trades", 0)
+        if num_trades > 0:
+            self._writer.add_scalar("Trading/Trades per Episode", num_trades, episode)
+        tc = info.get("total_transaction_costs", 0.0)
+        if tc > 0:
+            self._writer.add_scalar("Trading/Transaction Costs ($)", tc, episode)
+        if self._total_episodes > 0:
+            win_rate = self._winning_episodes / self._total_episodes * 100
+            self._writer.add_scalar("Trading/Win Rate (%)", win_rate, episode)
+
+        # === Learning (Is the agent improving?) ===
+        self._writer.add_scalar("Learning/Episode Reward", reward, episode)
+        if len(self._episode_rewards) >= 10:
+            avg = float(np.mean(self._episode_rewards[-10:]))
+            self._writer.add_scalar("Learning/Reward (10-episode avg)", avg, episode)
+
+        # Per-agent update metrics
+        update_metrics = info.get("update_metrics", {})
+        for agent_name, metrics in update_metrics.items():
+            if isinstance(metrics, dict):
+                for k, v in metrics.items():
+                    if isinstance(v, (int, float)):
+                        self._writer.add_scalar(
+                            f"Agents/{agent_name}/{k}", v, episode
+                        )
 
     def log_eval(self, episode: int, eval_result: dict[str, float]) -> None:
         """Log evaluation metrics."""
         self._eval_rewards.append(eval_result.get("mean_reward", 0.0))
 
         if self._writer:
-            for key, value in eval_result.items():
-                if isinstance(value, (int, float)):
-                    self._writer.add_scalar(f"eval/{key}", value, episode)
+            mean_r = eval_result.get("mean_reward", 0.0)
+            self._writer.add_scalar("Learning/Eval Reward (mean)", mean_r, episode)
+            std_r = eval_result.get("std_reward", 0.0)
+            self._writer.add_scalar("Learning/Eval Reward (std)", std_r, episode)
 
     def log_generation(self, generation: int, metrics: dict[str, Any]) -> None:
         """Log population-based training generation metrics."""
-        if self._writer:
-            for key, value in metrics.items():
-                if isinstance(value, (int, float)):
-                    self._writer.add_scalar(f"generation/{key}", value, generation)
+        if not self._writer:
+            return
+
+        train_mr = metrics.get("train_mean_reward", 0.0)
+        self._writer.add_scalar("Population/Mean Reward", train_mr, generation)
+        pool_size = metrics.get("pool_size", 0)
+        self._writer.add_scalar("Population/Pool Size", pool_size, generation)
+        best = metrics.get("best_eval_score", 0.0)
+        self._writer.add_scalar("Population/Best Agent Score", best, generation)
+
+    def log_agent_eval(
+        self, generation: int, agent_name: str, score: float, extra: dict[str, float] | None = None,
+    ) -> None:
+        """Log per-agent evaluation results at generation level."""
+        if not self._writer:
+            return
+        self._writer.add_scalar(f"Agents/{agent_name}/eval_score", score, generation)
+        if extra:
+            for k, v in extra.items():
+                if isinstance(v, (int, float)):
+                    self._writer.add_scalar(f"Agents/{agent_name}/{k}", v, generation)
 
     def log_scalar(self, tag: str, value: float, step: int) -> None:
         """Log an arbitrary scalar."""
@@ -104,6 +180,7 @@ class MetricsTracker:
             "best_reward": float(np.max(rewards)),
             "worst_reward": float(np.min(rewards)),
             "recent_mean_reward": self.get_recent_reward(100),
+            "win_rate": self._winning_episodes / max(self._total_episodes, 1) * 100,
         }
 
     def close(self) -> None:

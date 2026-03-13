@@ -59,16 +59,26 @@ def _get_device(prefer_gpu: bool = True) -> str:
     return "cpu"
 
 
-def _resolve_sb3_device(device_str: str) -> str:
-    """Convert internal device string to one SB3 can use.
+def _resolve_sb3_device(device_str: str):
+    """Convert internal device string to a torch device SB3 can use.
 
-    SB3 internally calls .numpy() on tensors, which requires CPU.
-    DirectML tensors can't be converted to numpy directly (unlike CUDA).
-    So SB3 models must run on CPU. The GPU is available for custom
-    tensor operations outside of SB3 via torch_directml.device().
+    When DirectML is available, we monkey-patch torch.Tensor.item and
+    .numpy so SB3's scalar extraction works transparently on GPU tensors.
+    This lets SB3 place models on the DirectML device for GPU-accelerated
+    forward/backward passes while the cheap scalar transfers happen
+    automatically.
     """
     if device_str == "dml":
-        # SB3 not compatible with DirectML — use CPU for SB3 internals
+        from hydra.compute.dml_compat import patch_tensor_for_directml
+
+        if patch_tensor_for_directml():
+            import torch_directml
+
+            device = torch_directml.device()
+            logger.info(f"SB3 will use DirectML device: {device}")
+            return device
+
+        logger.warning("DirectML patch failed, falling back to CPU for SB3")
         return "cpu"
     return device_str
 

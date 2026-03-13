@@ -84,27 +84,46 @@ class StaticAgent(BaseRLAgent):
 
     def load(self, path: str | Path) -> None:
         """Load model from a checkpoint."""
+        from hydra.agents.ppo_agent import _get_device, _resolve_sb3_device
+
         path = Path(path)
         if not path.exists():
             logger.warning(f"Checkpoint not found: {path}")
             return
 
-        try:
-            if self._source_type == "ppo":
-                from stable_baselines3 import PPO
-                self._model = PPO.load(str(path), device="cpu")
-            elif self._source_type == "sac":
-                from stable_baselines3 import SAC
-                self._model = SAC.load(str(path), device="cpu")
-            elif self._source_type == "a2c":
-                from stable_baselines3 import A2C
-                self._model = A2C.load(str(path), device="cpu")
-            else:
-                logger.warning(f"Unknown source type '{self._source_type}'")
+        device = _resolve_sb3_device(_get_device())
 
+        try:
+            self._model = self._load_sb3_model(path, device)
             logger.info(f"Loaded static agent '{self.name}' from {path}")
         except Exception as e:
-            logger.error(f"Failed to load static agent '{self.name}': {e}")
+            if device != "cpu":
+                logger.warning(
+                    f"Failed to load '{self.name}' on {device}: {e}. "
+                    "Retrying on CPU."
+                )
+                try:
+                    self._model = self._load_sb3_model(path, "cpu")
+                    logger.info(f"Loaded static agent '{self.name}' from {path} (CPU fallback)")
+                except Exception as e2:
+                    logger.error(f"Failed to load static agent '{self.name}': {e2}")
+            else:
+                logger.error(f"Failed to load static agent '{self.name}': {e}")
+
+    def _load_sb3_model(self, path: Path, device):
+        """Load an SB3 model by source type."""
+        if self._source_type == "ppo":
+            from stable_baselines3 import PPO
+            return PPO.load(str(path), device=device)
+        elif self._source_type == "sac":
+            from stable_baselines3 import SAC
+            return SAC.load(str(path), device=device)
+        elif self._source_type == "a2c":
+            from stable_baselines3 import A2C
+            return A2C.load(str(path), device=device)
+        else:
+            logger.warning(f"Unknown source type '{self._source_type}'")
+            return None
 
     @classmethod
     def from_agent(cls, agent: BaseRLAgent, name: str | None = None) -> StaticAgent:

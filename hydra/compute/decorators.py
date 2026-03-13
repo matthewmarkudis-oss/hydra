@@ -39,6 +39,9 @@ def gpu_task(memory_gb: float = 4.0, fallback_to_cpu: bool = True):
             rm = _get_resource_manager()
 
             if rm.gpu_available:
+                if rm.state.gpu.device_type == "directml":
+                    from hydra.compute.dml_compat import patch_tensor_for_directml
+                    patch_tensor_for_directml()
                 try:
                     logger.debug(f"Running {func.__name__} on GPU ({rm.state.gpu.device_type})")
                     return func(*args, **kwargs)

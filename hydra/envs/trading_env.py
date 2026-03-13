@@ -1,0 +1,306 @@
+"""Single-agent intraday trading environment.
+
+Gymnasium-compatible environment for RL training on 5-min bar data.
+Each episode is one trading day (~78 bars). All internals use float32 numpy.
+For backtesting/simulation only.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import gymnasium as gym
+import numpy as np
+
+from hydra.data.adapter import generate_synthetic_bars
+from hydra.data.indicators import compute_all_indicators
+from hydra.envs.action_processor import ActionProcessor
+from hydra.envs.market_simulator import MarketSimulator
+from hydra.envs.reward import DifferentialSharpeReward
+from hydra.envs.session_manager import SessionManager
+from hydra.envs.state_builder import StateBuilder
+from hydra.risk.env_constraints import EnvConstraints
+from hydra.risk.portfolio_risk import PortfolioRiskMonitor
+from hydra.utils.numpy_opts import extract_ohlcv_arrays, SharedMarketData
+
+
+class TradingEnv(gym.Env):
+    """Single-agent intraday trading environment.
+
+    Observation: float32 vector of dimension 7*num_stocks + 4.
+    Action: continuous Box[-1, +1] per stock.
+    Reward: Differential Sharpe + penalties.
+    Episode: one trading day of 5-min bars.
+    """
+
+    metadata = {"render_modes": ["human"]}
+
+    def __init__(
+        self,
+        market_data: SharedMarketData | None = None,
+        num_stocks: int = 10,
+        episode_bars: int = 78,
+        initial_cash: float = 100_000.0,
+        transaction_cost_bps: float = 5.0,
+        slippage_bps: float = 10.0,
+        spread_bps: float = 2.0,
+        max_position_pct: float = 0.10,
+        max_drawdown_pct: float = 0.10,
+        max_daily_loss_pct: float = 0.03,
+        sharpe_eta: float = 0.001,
+        drawdown_penalty: float = 2.0,
+        transaction_penalty: float = 0.5,
+        holding_penalty: float = 0.0,
+        dead_zone: float = 0.05,
+        normalize_obs: bool = True,
+        seed: int | None = None,
+        render_mode: str | None = None,
+    ):
+        super().__init__()
+
+        self.num_stocks = num_stocks
+        self.episode_bars = episode_bars
+        self.initial_cash = initial_cash
+        self.render_mode = render_mode
+        self._seed = seed
+
+        # Components
+        self.simulator = MarketSimulator(
+            num_stocks=num_stocks,
+            initial_cash=initial_cash,
+            transaction_cost_bps=transaction_cost_bps,
+            slippage_bps=slippage_bps,
+            spread_bps=spread_bps,
+        )
+
+        self.constraints = EnvConstraints(
+            max_position_pct=max_position_pct,
+            max_drawdown_pct=max_drawdown_pct,
+            max_daily_loss_pct=max_daily_loss_pct,
+        )
+
+        self.action_processor = ActionProcessor(
+            num_stocks=num_stocks,
+            constraints=self.constraints,
+            dead_zone=dead_zone,
+        )
+
+        self.reward_fn = DifferentialSharpeReward(
+            eta=sharpe_eta,
+            drawdown_penalty=drawdown_penalty,
+            transaction_penalty=transaction_penalty,
+            holding_penalty=holding_penalty,
+        )
+
+        self.state_builder = StateBuilder(
+            num_stocks=num_stocks,
+            episode_bars=episode_bars,
+            normalize=normalize_obs,
+        )
+
+        self.session_manager = SessionManager(bar_interval_minutes=5)
+        self.risk_monitor = PortfolioRiskMonitor(num_stocks, initial_cash)
+
+        # Market data (can be injected or generated synthetically)
+        self._market_data = market_data
+        self._synthetic_tickers = [f"SYN{i:03d}" for i in range(num_stocks)]
+
+        # Spaces
+        obs_dim = self.state_builder.obs_dim
+        self.observation_space = gym.spaces.Box(
+            low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32,
+        )
+        self.action_space = gym.spaces.Box(
+            low=-1.0, high=1.0, shape=(num_stocks,), dtype=np.float32,
+        )
+
+        # Episode state
+        self._step_count = 0
+        self._episode_features: dict[str, dict[str, np.ndarray]] = {}
+        self._tickers: list[str] = []
+        self._episode_day_index = 0
+        self._num_episodes = 0
+        self._total_days_available = 0
+
+    def reset(
+        self,
+        *,
+        seed: int | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Reset environment for a new episode (one trading day)."""
+        super().reset(seed=seed)
+
+        self._step_count = 0
+        self.simulator.reset()
+        self.constraints.reset(self.initial_cash)
+        self.reward_fn.reset(self.initial_cash)
+        self.risk_monitor.reset(self.initial_cash)
+
+        # Load or generate market data for this episode
+        self._load_episode_data(options)
+
+        # Pre-compute session labels
+        session_labels = self.session_manager.compute_session_labels(self.episode_bars)
+
+        # Initialize state builder with pre-computed features
+        self.state_builder.init_episode(
+            features=self._episode_features,
+            tickers=self._tickers,
+            session_labels=session_labels,
+        )
+
+        obs = self.state_builder.build(
+            step=0,
+            cash=float(self.simulator.cash),
+            initial_cash=self.initial_cash,
+            holdings=self.simulator.holdings,
+            portfolio_value=self.initial_cash,
+            peak_value=self.initial_cash,
+        )
+
+        info = {
+            "episode": self._num_episodes,
+            "tickers": self._tickers,
+            "initial_cash": self.initial_cash,
+        }
+
+        self._num_episodes += 1
+        return obs, info
+
+    def step(
+        self, action: np.ndarray
+    ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
+        """Execute one step (one 5-min bar).
+
+        Args:
+            action: Continuous actions per stock, shape (num_stocks,).
+
+        Returns:
+            Tuple of (observation, reward, terminated, truncated, info).
+        """
+        self._step_count += 1
+
+        # Get current prices
+        prices = self.state_builder.get_current_prices(
+            min(self._step_count, self.episode_bars - 1)
+        )
+
+        # Process actions through constraint system
+        processed_actions = self.action_processor.process(
+            raw_actions=action,
+            holdings=self.simulator.holdings,
+            prices=prices,
+            portfolio_value=self.simulator.get_portfolio_value(prices),
+        )
+
+        # Execute orders
+        shares_traded, transaction_cost = self.simulator.execute_orders(
+            target_fractions=processed_actions,
+            current_prices=prices,
+        )
+
+        # Compute portfolio value
+        portfolio_value = self.simulator.get_portfolio_value(prices)
+
+        # Compute reward
+        reward, reward_info = self.reward_fn.compute(
+            portfolio_value=portfolio_value,
+            transaction_cost=transaction_cost,
+            holdings=self.simulator.holdings,
+            prices=prices,
+        )
+
+        # Check risk constraints
+        step_return = reward_info.get("step_return", 0.0)
+        should_truncate, is_halted, constraint_info = self.constraints.check_constraints(
+            portfolio_value=portfolio_value,
+            step_return=step_return,
+        )
+
+        # Update risk monitor
+        risk_metrics = self.risk_monitor.update(portfolio_value)
+
+        # Episode termination
+        terminated = False
+        truncated = should_truncate or (self._step_count >= self.episode_bars)
+
+        # If halted by constraints, zero out reward to penalize
+        if is_halted and not should_truncate:
+            reward = 0.0
+
+        # Build next observation
+        obs_step = min(self._step_count, self.episode_bars - 1)
+        obs = self.state_builder.build(
+            step=obs_step,
+            cash=float(self.simulator.cash),
+            initial_cash=self.initial_cash,
+            holdings=self.simulator.holdings,
+            portfolio_value=portfolio_value,
+            peak_value=self.reward_fn.peak_value,
+        )
+
+        info = {
+            **reward_info,
+            **constraint_info,
+            **risk_metrics,
+            "shares_traded": shares_traded.copy(),
+            "transaction_cost": transaction_cost,
+            "step": self._step_count,
+            "halted": is_halted,
+        }
+
+        # End-of-episode summary
+        if terminated or truncated:
+            # Liquidate all positions at end of day
+            self.simulator.liquidate_all(prices)
+            info["episode_summary"] = self.risk_monitor.get_summary()
+            info["total_transaction_costs"] = float(self.simulator.total_transaction_costs)
+            info["num_trades"] = self.simulator.num_trades
+
+        return obs, float(reward), terminated, truncated, info
+
+    def _load_episode_data(self, options: dict | None) -> None:
+        """Load market data for the current episode."""
+        if self._market_data is not None:
+            self._tickers = list(self._market_data.tickers)[:self.num_stocks]
+            self._episode_features = {}
+            for ticker in self._tickers:
+                ohlcv = self._market_data.get_ohlcv(ticker)
+                features = {**ohlcv}
+                for ind_name in ("rsi", "macd_hist", "cci", "bb_pct_b", "volume_ratio"):
+                    try:
+                        features[ind_name] = self._market_data.get_indicator(ticker, ind_name)
+                    except KeyError:
+                        features[ind_name] = np.zeros(self._market_data.num_bars, dtype=np.float32)
+                self._episode_features[ticker] = features
+        else:
+            # Generate synthetic data for training/testing
+            self._tickers = self._synthetic_tickers[:self.num_stocks]
+            self._episode_features = {}
+            rng_seed = (self._seed or 0) + self._num_episodes
+            for i, ticker in enumerate(self._tickers):
+                df = generate_synthetic_bars(
+                    num_bars=self.episode_bars,
+                    base_price=50.0 + i * 20.0,
+                    volatility=0.01 + i * 0.002,
+                    seed=rng_seed + i,
+                )
+                ohlcv = extract_ohlcv_arrays(df)
+                indicators = compute_all_indicators(ohlcv)
+                self._episode_features[ticker] = {**ohlcv, **indicators}
+
+    def render(self) -> None:
+        """Render current state (human-readable)."""
+        if self.render_mode != "human":
+            return
+        prices = self.state_builder.get_current_prices(
+            min(self._step_count, self.episode_bars - 1)
+        )
+        pv = self.simulator.get_portfolio_value(prices)
+        print(
+            f"Step {self._step_count}/{self.episode_bars} | "
+            f"Cash: ${self.simulator.cash:.2f} | "
+            f"Portfolio: ${pv:.2f} | "
+            f"Trades: {self.simulator.num_trades}"
+        )

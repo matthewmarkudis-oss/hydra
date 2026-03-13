@@ -1,0 +1,70 @@
+{
+  "project": "Hydra — Multi-Agent RL Trading System",
+  "description": "Multi-agent reinforcement learning system for intraday US equity trading using population-based training",
+  "phases": [
+    {
+      "name": "Phase A: Foundation",
+      "stories": [
+        {"id": "US-001", "title": "Project scaffold", "status": "done", "files": ["setup.py", "requirements.txt", "CLAUDE.md"]},
+        {"id": "US-002", "title": "Config system", "status": "done", "files": ["hydra/config/schema.py", "hydra/config/defaults.py", "hydra/config/hydra_config.yaml"]},
+        {"id": "US-003", "title": "Numpy optimizations", "status": "done", "files": ["hydra/utils/numpy_opts.py"]},
+        {"id": "US-004", "title": "Indicator library", "status": "done", "files": ["hydra/data/indicators.py"]},
+        {"id": "US-005", "title": "Data adapter + feature store", "status": "done", "files": ["hydra/data/adapter.py", "hydra/data/feature_store.py"]},
+        {"id": "US-006", "title": "State builder", "status": "done", "files": ["hydra/envs/state_builder.py"]}
+      ]
+    },
+    {
+      "name": "Phase B: Environment",
+      "stories": [
+        {"id": "US-007", "title": "Market simulator", "status": "done", "files": ["hydra/envs/market_simulator.py"]},
+        {"id": "US-008", "title": "Session manager", "status": "done", "files": ["hydra/envs/session_manager.py"]},
+        {"id": "US-009", "title": "Reward functions", "status": "done", "files": ["hydra/envs/reward.py"]},
+        {"id": "US-010", "title": "Risk constraints", "status": "done", "files": ["hydra/risk/env_constraints.py"]},
+        {"id": "US-011", "title": "TradingEnv", "status": "done", "files": ["hydra/envs/trading_env.py"]},
+        {"id": "US-012", "title": "Action processor", "status": "done", "files": ["hydra/envs/action_processor.py"]}
+      ]
+    },
+    {
+      "name": "Phase C: Agents",
+      "stories": [
+        {"id": "US-013", "title": "Base RL agent", "status": "done", "files": ["hydra/agents/base_rl_agent.py"]},
+        {"id": "US-014", "title": "PPO agent", "status": "done", "files": ["hydra/agents/ppo_agent.py"]},
+        {"id": "US-015", "title": "SAC agent", "status": "done", "files": ["hydra/agents/sac_agent.py"]},
+        {"id": "US-016", "title": "Static agent", "status": "done", "files": ["hydra/agents/static_agent.py"]},
+        {"id": "US-017", "title": "Rule-based adapter", "status": "done", "files": ["hydra/agents/rule_based_agent.py"]},
+        {"id": "US-018", "title": "Agent pool", "status": "done", "files": ["hydra/agents/agent_pool.py"]}
+      ]
+    },
+    {
+      "name": "Phase D: Multi-Agent + Training",
+      "stories": [
+        {"id": "US-019", "title": "Multi-agent env", "status": "done", "files": ["hydra/envs/multi_agent_env.py"]},
+        {"id": "US-020", "title": "Training loop", "status": "done", "files": ["hydra/training/trainer.py"]},
+        {"id": "US-021", "title": "Population-based training", "status": "done", "files": ["hydra/training/population_trainer.py", "hydra/training/curriculum.py"]}
+      ]
+    },
+    {
+      "name": "Phase E: Compute Orchestration",
+      "stories": [
+        {"id": "US-022", "title": "GPU/CPU decorators", "status": "done", "files": ["hydra/compute/decorators.py"]},
+        {"id": "US-023", "title": "Resource manager", "status": "done", "files": ["hydra/compute/resource_manager.py"]},
+        {"id": "US-024", "title": "Workflow DAG engine", "status": "done", "files": ["hydra/compute/workflow.py", "hydra/compute/executor.py"]}
+      ]
+    },
+    {
+      "name": "Phase F: Pipeline + Integration",
+      "stories": [
+        {"id": "US-025", "title": "Data prep phase", "status": "done", "files": ["hydra/pipeline/data_prep.py"]},
+        {"id": "US-026", "title": "Env builder phase", "status": "done", "files": ["hydra/pipeline/env_builder.py"]},
+        {"id": "US-027", "title": "Training phase", "status": "done", "files": ["hydra/pipeline/train_phase.py"]},
+        {"id": "US-028", "title": "Eval phase", "status": "done", "files": ["hydra/pipeline/eval_phase.py"]},
+        {"id": "US-029", "title": "Pool update phase", "status": "done", "files": ["hydra/pipeline/pool_update.py"]},
+        {"id": "US-030", "title": "Validation phase", "status": "done", "files": ["hydra/pipeline/validation_phase.py"]},
+        {"id": "US-031", "title": "Pipeline orchestrator", "status": "done", "files": ["hydra/pipeline/orchestrator.py"]},
+        {"id": "US-032", "title": "CLI scripts", "status": "done", "files": ["scripts/train.py", "scripts/evaluate.py", "scripts/export_to_vectorbt.py"]},
+        {"id": "US-033", "title": "Metrics + TensorBoard", "status": "done", "files": ["hydra/training/metrics_tracker.py"]},
+        {"id": "US-034", "title": "Test suite", "status": "done", "files": ["tests/"]}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+# Core RL
+gymnasium>=0.29.0
+stable-baselines3>=2.1.0
+
+# PyTorch (CPU base — DirectML added separately)
+torch>=2.0.0
+torch-directml>=0.2.0
+
+# Data & numerics
+numpy>=1.24.0
+pandas>=2.0.0
+pyarrow>=12.0.0
+
+# Technical indicators
+ta-lib>=0.4.28;platform_system!="Windows"
+
+# Config & validation
+pydantic>=2.0.0
+pyyaml>=6.0
+
+# Monitoring
+tensorboard>=2.14.0
+
+# Backtesting validation
+vectorbt>=0.26.0
+
+# Alpaca data (reuse from trading_agents)
+alpaca-trade-api>=3.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0

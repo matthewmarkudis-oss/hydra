@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 
 from hydra.agents.base_rl_agent import BaseRLAgent
-from hydra.agents.ppo_agent import _get_device, _make_dummy_env
+from hydra.agents.ppo_agent import _get_device, _make_dummy_env, _resolve_sb3_device
 
 logger = logging.getLogger("hydra.agents.a2c")
 
@@ -64,7 +64,7 @@ class A2CAgent(BaseRLAgent):
                 low=-1.0, high=1.0, shape=(self.action_dim,), dtype=np.float32,
             )
 
-            device = self._device if self._device != "dml" else "cpu"
+            device = _resolve_sb3_device(self._device)
             dummy_env = _make_dummy_env(obs_space, action_space)
 
             self._model = A2C(
@@ -134,5 +134,5 @@ class A2CAgent(BaseRLAgent):
         """Load A2C model."""
         from stable_baselines3 import A2C
 
-        device = self._device if self._device != "dml" else "cpu"
+        device = _resolve_sb3_device(self._device)
         self._model = A2C.load(str(path), device=device)

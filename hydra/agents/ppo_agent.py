@@ -59,6 +59,22 @@ def _get_device(prefer_gpu: bool = True) -> str:
     return "cpu"
 
 
+def _resolve_sb3_device(device_str: str) -> str:
+    """Convert internal device string to one SB3 can use.
+
+    SB3 accepts 'cpu', 'cuda', 'cuda:0', or any torch.device.
+    For DirectML, we pass the actual torch device object string
+    so SB3 moves tensors to the GPU.
+    """
+    if device_str == "dml":
+        try:
+            import torch_directml
+            return str(torch_directml.device())  # "privateuseone:0"
+        except (ImportError, TypeError, Exception):
+            return "cpu"
+    return device_str
+
+
 class PPOAgent(BaseRLAgent):
     """PPO agent using stable-baselines3.
 
@@ -116,7 +132,7 @@ class PPOAgent(BaseRLAgent):
                 low=-1.0, high=1.0, shape=(self.action_dim,), dtype=np.float32,
             )
 
-            device = self._device if self._device != "dml" else "cpu"
+            device = _resolve_sb3_device(self._device)
 
             dummy_env = _make_dummy_env(obs_space, action_space)
 
@@ -224,6 +240,6 @@ class PPOAgent(BaseRLAgent):
         """Load PPO model from disk."""
         from stable_baselines3 import PPO
 
-        device = self._device if self._device != "dml" else "cpu"
+        device = _resolve_sb3_device(self._device)
         self._model = PPO.load(str(path), device=device)
         logger.info(f"Loaded PPO agent '{self.name}' from {path}")

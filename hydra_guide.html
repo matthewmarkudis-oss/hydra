@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hydra MARL System Guide</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --card: #0f3460;
+    --accent: #e94560;
+    --accent2: #00d4ff;
+    --text: #eee;
+    --muted: #aab;
+    --green: #4caf50;
+    --yellow: #ffb74d;
+    --red: #ef5350;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 2.5rem;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.5rem;
+  }
+  h2 {
+    font-size: 1.6rem;
+    color: var(--accent2);
+    margin: 2rem 0 1rem;
+    border-bottom: 2px solid var(--card);
+    padding-bottom: 0.5rem;
+  }
+  h3 {
+    font-size: 1.2rem;
+    color: var(--accent);
+    margin: 1.5rem 0 0.5rem;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 1.1rem;
+    margin-bottom: 2rem;
+  }
+  .card {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin: 1rem 0;
+    border-left: 4px solid var(--card);
+  }
+  .card.highlight {
+    border-left-color: var(--accent2);
+  }
+  .card.success {
+    border-left-color: var(--green);
+  }
+  .card.warning {
+    border-left-color: var(--yellow);
+  }
+  .card.danger {
+    border-left-color: var(--red);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .agent-card {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 1.25rem;
+    border: 1px solid var(--card);
+    transition: transform 0.2s;
+  }
+  .agent-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent2);
+  }
+  .agent-name {
+    font-size: 1.15rem;
+    font-weight: bold;
+    color: var(--accent2);
+  }
+  .agent-type {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-top: 0.25rem;
+  }
+  .type-learning { background: rgba(233,69,96,0.3); color: var(--accent); }
+  .type-static { background: rgba(0,212,255,0.3); color: var(--accent2); }
+  .type-rule { background: rgba(76,175,80,0.3); color: var(--green); }
+  .agent-desc {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--card);
+  }
+  th {
+    color: var(--accent2);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  code {
+    background: var(--card);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.9em;
+  }
+  pre {
+    background: var(--card);
+    padding: 1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin: 0.75rem 0;
+  }
+  .metric {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--card);
+    border-radius: 8px;
+    margin: 0.25rem;
+  }
+  .metric-value {
+    font-size: 1.3rem;
+    font-weight: bold;
+  }
+  .metric-label {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .status-good { color: var(--green); }
+  .status-warn { color: var(--yellow); }
+  .status-bad { color: var(--red); }
+  .toc {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+  }
+  .toc a {
+    color: var(--accent2);
+    text-decoration: none;
+    display: block;
+    padding: 0.25rem 0;
+  }
+  .toc a:hover { color: var(--accent); }
+  .phase-bar {
+    display: flex;
+    gap: 0;
+    margin: 1rem 0;
+    border-radius: 8px;
+    overflow: hidden;
+    height: 32px;
+  }
+  .phase-segment {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: bold;
+    color: white;
+  }
+  .flow-diagram {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin: 1rem 0;
+    padding: 1rem;
+    background: var(--surface);
+    border-radius: 12px;
+  }
+  .flow-box {
+    background: var(--card);
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+  .flow-arrow {
+    color: var(--accent2);
+    font-size: 1.2rem;
+  }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--card);
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h1>Hydra MARL System</h1>
+<p class="subtitle">Multi-Agent Reinforcement Learning for Portfolio Optimization &mdash; System Guide</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <a href="#what">1. What is Hydra?</a>
+  <a href="#agents">2. The Agent Pool</a>
+  <a href="#how">3. How It Works</a>
+  <a href="#pipeline">4. The Pipeline</a>
+  <a href="#curriculum">5. Multi-Seed Curriculum</a>
+  <a href="#success">6. How Do We Know If It's Working?</a>
+  <a href="#dashboard">7. Reading the Dashboard</a>
+  <a href="#hardware">8. Hardware &amp; Compute</a>
+  <a href="#run">9. How to Run</a>
+  <a href="#architecture">10. Architecture</a>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="what">1. What is Hydra?</h2>
+
+<div class="card highlight">
+  <p><strong>Hydra</strong> is a multi-agent reinforcement learning (MARL) system where multiple AI agents collaborate to manage a simulated portfolio. Instead of hand-coded rules, agents <em>learn</em> strategies through trial and error in a simulated market environment.</p>
+</div>
+
+<p>The core idea comes from two research directions:</p>
+<ul style="margin: 1rem 0 1rem 2rem;">
+  <li><strong>Google DeepMind</strong> &mdash; Training agents against a diverse pool (learning + static + rule-based) produces cooperative behavior without hardcoded coordination</li>
+  <li><strong>FinRL / Covalent</strong> &mdash; Gym-compatible environments with RL algorithms (PPO, SAC, A2C) and heterogeneous CPU/GPU compute orchestration</li>
+</ul>
+
+<p>The system operates on <strong>simulated intraday data</strong> (5-minute bars) with synthetic market environments for training. Each episode represents one simulated day (~78 bars from 9:30&ndash;16:00).</p>
+
+<!-- ============================================================ -->
+<h2 id="agents">2. The Agent Pool</h2>
+
+<p>Hydra uses a diverse population of 6 agents. Diversity is key &mdash; different agent types bring different strengths, and cooperation emerges naturally from shared rewards.</p>
+
+<div class="grid">
+  <div class="agent-card">
+    <div class="agent-name">PPO Agent</div>
+    <span class="agent-type type-learning">Learning</span>
+    <div class="agent-desc">
+      <strong>Proximal Policy Optimization.</strong> The workhorse of RL. Clips policy updates to prevent destructive large steps. Good at learning stable strategies. Uses neural network policy (MlpPolicy) with SB3.
+    </div>
+  </div>
+
+  <div class="agent-card">
+    <div class="agent-name">SAC Agent</div>
+    <span class="agent-type type-learning">Learning</span>
+    <div class="agent-desc">
+      <strong>Soft Actor-Critic.</strong> Maximizes both reward and entropy (exploration). Better at finding diverse strategies and avoiding local optima. Off-policy = more sample efficient.
+    </div>
+  </div>
+
+  <div class="agent-card">
+    <div class="agent-name">A2C Agent</div>
+    <span class="agent-type type-learning">Learning</span>
+    <div class="agent-desc">
+      <strong>Advantage Actor-Critic.</strong> Simpler on-policy method. Fast to train, lower variance than vanilla policy gradient. Good complement to PPO and SAC.
+    </div>
+  </div>
+
+  <div class="agent-card">
+    <div class="agent-name">Static Agent</div>
+    <span class="agent-type type-static">Static</span>
+    <div class="agent-desc">
+      <strong>Frozen snapshot.</strong> A previously-trained RL agent that no longer updates its weights. Provides a stable reference strategy that learning agents train against. Cannot be fooled into changing.
+    </div>
+  </div>
+
+  <div class="agent-card">
+    <div class="agent-name">Alpha Momentum</div>
+    <span class="agent-type type-rule">Rule-Based</span>
+    <div class="agent-desc">
+      <strong>Momentum strategy adapter.</strong> Wraps the existing Alpha agent from the old system. Follows trends &mdash; buys when price is rising, sells when falling. Provides a non-RL baseline.
+    </div>
+  </div>
+
+  <div class="agent-card">
+    <div class="agent-name">Beta Mean Reversion</div>
+    <span class="agent-type type-rule">Rule-Based</span>
+    <div class="agent-desc">
+      <strong>Mean reversion adapter.</strong> Wraps the existing Beta agent. Bets that prices revert to average &mdash; buys dips, sells rallies. Counterbalances momentum strategies.
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Why Mix Agent Types?</h3>
+  <p>The DeepMind insight: training RL agents against only other RL agents leads to unstable co-evolution. Including <strong>static agents</strong> (frozen weights) and <strong>rule-based agents</strong> (handcrafted logic) anchors the learning and prevents strategy collapse. Learning agents must develop strategies that work alongside agents they can't influence.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="how">3. How It Works</h2>
+
+<h3>Shared Portfolio</h3>
+<p>All 6 agents observe the same market state and independently choose actions. Their actions are <strong>aggregated via weighted average</strong> (equal weight, normalized), producing a single portfolio action. The shared reward (based on the combined portfolio's performance) incentivizes cooperation &mdash; agents learn to complement each other.</p>
+
+<h3>The Observation (What Agents See)</h3>
+<div class="card">
+  <p>~75-dimensional float32 vector per timestep:</p>
+  <table>
+    <tr><th>Category</th><th>Features</th></tr>
+    <tr><td>Portfolio</td><td>Cash position (normalized), per-stock holdings</td></tr>
+    <tr><td>Price Data</td><td>Per-stock current price (normalized)</td></tr>
+    <tr><td>Technical Indicators</td><td>RSI, MACD, CCI, Bollinger %B, volume ratio (per stock)</td></tr>
+    <tr><td>Global Context</td><td>VIX level, session type (open/mid/close), time-of-day, current drawdown, daily P&amp;L</td></tr>
+  </table>
+</div>
+
+<h3>The Action (What Agents Do)</h3>
+<div class="card">
+  <p>Continuous value in [-1, +1] per stock:</p>
+  <ul style="margin: 0.5rem 0 0 1.5rem;">
+    <li><strong>Negative</strong> = Sell that fraction of current holdings</li>
+    <li><strong>Positive</strong> = Buy that fraction of available cash</li>
+    <li><strong>Zero</strong> = Hold</li>
+  </ul>
+</div>
+
+<h3>The Reward (How Agents Learn)</h3>
+<div class="card">
+  <p>Reward = <strong>Differential Sharpe Ratio</strong> + penalties</p>
+  <ul style="margin: 0.5rem 0 0 1.5rem;">
+    <li><strong>Differential Sharpe</strong>: Measures risk-adjusted return improvement at each step</li>
+    <li><strong>Drawdown penalty</strong>: Punishes large portfolio declines</li>
+    <li><strong>Transaction cost penalty</strong>: Discourages excessive buying/selling</li>
+  </ul>
+  <p style="margin-top: 0.5rem; color: var(--muted);">Risk constraints (position limits, daily loss cap, drawdown halt) are enforced <em>inside</em> the environment &mdash; agents learn to respect them because violations produce immediate negative consequences.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="pipeline">4. The Pipeline</h2>
+
+<p>Each training run goes through 6 phases, chained as a workflow DAG:</p>
+
+<div class="flow-diagram">
+  <div class="flow-box">1. Data Prep</div>
+  <div class="flow-arrow">&rarr;</div>
+  <div class="flow-box">2. Env Build</div>
+  <div class="flow-arrow">&rarr;</div>
+  <div class="flow-box">3. Train</div>
+  <div class="flow-arrow">&rarr;</div>
+  <div class="flow-box">4. Evaluate</div>
+  <div class="flow-arrow">&rarr;</div>
+  <div class="flow-box">5. Pool Update</div>
+  <div class="flow-arrow">&rarr;</div>
+  <div class="flow-box">6. Validate</div>
+</div>
+
+<table>
+  <tr><th>Phase</th><th>What Happens</th><th>Compute</th></tr>
+  <tr><td><strong>Data Prep</strong></td><td>Generate synthetic market data, compute features (RSI, MACD, CCI, Bollinger), cache as .npy arrays</td><td>CPU</td></tr>
+  <tr><td><strong>Env Build</strong></td><td>Construct gymnasium environments with train/validation/test date splits</td><td>CPU</td></tr>
+  <tr><td><strong>Train</strong></td><td>Population-based training: each generation runs multi-agent episodes, then agents do gradient updates via SB3's <code>learn()</code> method</td><td>CPU (SB3)</td></tr>
+  <tr><td><strong>Evaluate</strong></td><td>Backtest strategies on held-out data, compute Sharpe, max drawdown, win rate</td><td>CPU</td></tr>
+  <tr><td><strong>Pool Update</strong></td><td>Rank agents by eval results; top performers get frozen as static agents, poor performers are replaced</td><td>CPU</td></tr>
+  <tr><td><strong>Validate</strong></td><td>ATHENA-style walk-forward validation with statistical rigor (bootstrap confidence intervals, deflated Sharpe ratio)</td><td>CPU</td></tr>
+</table>
+
+<h3>Population-Based Training (Generations)</h3>
+<div class="card">
+  <p>Training is organized into <strong>generations</strong>. Each generation:</p>
+  <ol style="margin: 0.5rem 0 0 1.5rem;">
+    <li>All agents play through episodes together (multi-agent environment)</li>
+    <li>Track per-agent and portfolio metrics</li>
+    <li>Learning agents do SB3 gradient updates (<code>agent.train_on_env()</code>)</li>
+    <li>Evaluate all agents</li>
+    <li>Promote top performers / freeze as static / demote worst</li>
+  </ol>
+  <p style="margin-top: 0.5rem; color: var(--muted);">This is inspired by DeepMind's population-based training &mdash; the pool evolves over time, and agents must adapt to an ever-changing mix of opponents and teammates.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="curriculum">5. Multi-Seed Curriculum</h2>
+
+<p>To build robust agents, we run the full pipeline across <strong>10 different random seeds</strong>, organized in 3 phases of increasing difficulty:</p>
+
+<div class="phase-bar">
+  <div class="phase-segment" style="flex: 3; background: var(--green);">Warmup (3 seeds)</div>
+  <div class="phase-segment" style="flex: 4; background: var(--accent2);">Main (4 seeds)</div>
+  <div class="phase-segment" style="flex: 3; background: var(--accent);">Stress (3 seeds)</div>
+</div>
+
+<table>
+  <tr><th>Phase</th><th>Seeds</th><th>Generations</th><th>Episodes</th><th>Purpose</th></tr>
+  <tr><td class="status-good">Warmup</td><td>42, 43, 44</td><td>3</td><td>15</td><td>Learn basic market dynamics</td></tr>
+  <tr><td style="color: var(--accent2)">Main</td><td>100, 101, 102, 103</td><td>5</td><td>20</td><td>Deeper learning, diverse markets</td></tr>
+  <tr><td class="status-bad">Stress</td><td>200, 201, 202</td><td>5</td><td>25</td><td>High-volatility regime testing</td></tr>
+</table>
+
+<div class="card">
+  <p>Each seed generates a <strong>different synthetic market</strong> with unique price dynamics, volatility patterns, and trend characteristics. An agent that only performs well on one seed is overfitting. We want agents that <strong>consistently pass validation across many seeds</strong>.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="success">6. How Do We Know If It's Working?</h2>
+
+<p>This is the most important section. Here are the concrete metrics that tell you whether the system is succeeding:</p>
+
+<h3>Key Success Metrics</h3>
+
+<div class="grid">
+  <div class="card success">
+    <h3 class="status-good">Sharpe Ratio &gt; 0.5</h3>
+    <p>Risk-adjusted return. Measures return per unit of risk. Above 0.5 means the strategy is generating meaningful alpha relative to its volatility. Above 1.0 is strong.</p>
+  </div>
+
+  <div class="card success">
+    <h3 class="status-good">ATHENA Validation Pass</h3>
+    <p>Walk-forward out-of-sample test. Agents must pass on data they never trained on. This is the gold standard &mdash; it prevents overfitting to training data.</p>
+  </div>
+
+  <div class="card success">
+    <h3 class="status-good">Seed Consistency &gt; 70%</h3>
+    <p>An agent type passing validation on 7+ of 10 seeds means it generalizes well. If it only passes on 2-3 seeds, it's likely overfitting to specific market conditions.</p>
+  </div>
+
+  <div class="card success">
+    <h3 class="status-good">Reward Improvement Across Generations</h3>
+    <p>Episode rewards should trend upward (less negative, then positive) as training progresses. Flat or declining rewards mean the agent isn't learning.</p>
+  </div>
+</div>
+
+<h3>What "Good" Looks Like</h3>
+
+<table>
+  <tr><th>Metric</th><th class="status-bad">Bad</th><th class="status-warn">Okay</th><th class="status-good">Good</th><th class="status-good">Great</th></tr>
+  <tr>
+    <td>Mean Reward</td>
+    <td>&lt; -100</td>
+    <td>-100 to -30</td>
+    <td>-30 to 0</td>
+    <td>&gt; 0</td>
+  </tr>
+  <tr>
+    <td>Sharpe Ratio</td>
+    <td>&lt; 0</td>
+    <td>0 to 0.5</td>
+    <td>0.5 to 1.0</td>
+    <td>&gt; 1.0</td>
+  </tr>
+  <tr>
+    <td>Max Drawdown</td>
+    <td>&gt; 20%</td>
+    <td>10-20%</td>
+    <td>5-10%</td>
+    <td>&lt; 5%</td>
+  </tr>
+  <tr>
+    <td>Seeds Passing</td>
+    <td>0-2 / 10</td>
+    <td>3-6 / 10</td>
+    <td>7-8 / 10</td>
+    <td>9-10 / 10</td>
+  </tr>
+  <tr>
+    <td>ATHENA Validation</td>
+    <td>0 agents</td>
+    <td>1-2 agents</td>
+    <td>3-4 agents</td>
+    <td>5-6 agents</td>
+  </tr>
+</table>
+
+<h3>Warning Signs</h3>
+
+<div class="grid">
+  <div class="card danger">
+    <h3>Flat Rewards</h3>
+    <p>If rewards don't improve across generations, the learning rate may be wrong, the reward signal too sparse, or the environment too hard.</p>
+  </div>
+  <div class="card danger">
+    <h3>High Variance Across Seeds</h3>
+    <p>If an agent passes on seed 42 but fails on seed 43, it's overfitting. Robust strategies should work across diverse market conditions.</p>
+  </div>
+  <div class="card warning">
+    <h3>All Agents Agree</h3>
+    <p>If all agents take identical actions, they've converged to a single strategy. The pool has lost diversity. Static and rule-based agents should prevent this.</p>
+  </div>
+  <div class="card warning">
+    <h3>Excessive Holding</h3>
+    <p>If agents learn to just hold cash (0 activity), they've found a local optimum that avoids losses but doesn't generate returns. Check the transaction count metric.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="dashboard">7. Reading the Dashboard</h2>
+
+<p>The TensorBoard dashboard at <code>http://localhost:6006</code> shows metrics in these categories:</p>
+
+<table>
+  <tr><th>Category</th><th>Key Metrics</th><th>What to Look For</th></tr>
+  <tr>
+    <td><strong>Performance/</strong></td>
+    <td>Portfolio Value, P&amp;L, Return %</td>
+    <td>Portfolio value should be stable or growing. P&amp;L trending positive.</td>
+  </tr>
+  <tr>
+    <td><strong>Risk/</strong></td>
+    <td>Max Drawdown %, Sharpe, Volatility</td>
+    <td>Drawdown should decrease over training. Sharpe should increase.</td>
+  </tr>
+  <tr>
+    <td><strong>Trading/</strong></td>
+    <td>Trades per Episode, Costs, Win Rate</td>
+    <td>Agent should be active (10+ trades), not just holding. Win rate above 45%.</td>
+  </tr>
+  <tr>
+    <td><strong>Learning/</strong></td>
+    <td>Episode Reward, Rolling Average</td>
+    <td>The most important chart. Reward should trend upward over episodes.</td>
+  </tr>
+  <tr>
+    <td><strong>Agents/</strong></td>
+    <td>Per-agent eval scores</td>
+    <td>Compare individual agent performance. PPO and SAC should improve; rule-based stays flat.</td>
+  </tr>
+  <tr>
+    <td><strong>Population/</strong></td>
+    <td>Pool size, Mean Reward, Best Agent</td>
+    <td>Best agent score should increase each generation.</td>
+  </tr>
+</table>
+
+<div class="card highlight">
+  <h3>Quick Health Check</h3>
+  <ol style="margin: 0.5rem 0 0 1.5rem;">
+    <li>Open <code>http://localhost:6006</code></li>
+    <li>Check <strong>Learning/Episode_Reward</strong> &mdash; is it trending up?</li>
+    <li>Check <strong>Risk/Sharpe_Ratio</strong> &mdash; is it above 0?</li>
+    <li>Check <strong>Trading/Trades_per_Episode</strong> &mdash; is the agent active?</li>
+    <li>If all three are positive, the system is learning.</li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="hardware">8. Hardware &amp; Compute</h2>
+
+<div class="card">
+  <table>
+    <tr><th>Component</th><th>Spec</th><th>Role</th></tr>
+    <tr><td>CPU</td><td>AMD Ryzen 7 5800X (8 cores / 16 threads)</td><td>Data processing, feature engineering, backtesting, SB3 training</td></tr>
+    <tr><td>GPU</td><td>AMD Radeon RX 6900 XT (16GB VRAM)</td><td>Available via DirectML for custom PyTorch ops (SB3 uses CPU)</td></tr>
+    <tr><td>RAM</td><td>System memory</td><td>Market data caching, replay buffers</td></tr>
+  </table>
+</div>
+
+<div class="card warning">
+  <h3>GPU Note</h3>
+  <p>The AMD 6900XT uses <strong>DirectML</strong> (not CUDA). SB3 (stable-baselines3) is incompatible with DirectML because it internally converts tensors to numpy, which requires CPU memory. So SB3 training runs on CPU. The GPU is available for custom PyTorch operations outside of SB3 via <code>torch_directml.device()</code>. Future work: custom training loops that bypass SB3 to leverage the GPU fully.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="run">9. How to Run</h2>
+
+<h3>Environment Setup</h3>
+<pre>
+conda activate hydra          # Python 3.11 environment
+cd C:\TradingAgents\hydra
+</pre>
+
+<h3>Single Training Run</h3>
+<pre>
+python scripts/train.py
+</pre>
+<p>Runs one full pipeline (data prep -> train -> evaluate -> validate) with default settings.</p>
+
+<h3>Full Curriculum (10 Seeds)</h3>
+<pre>
+python scripts/train_curriculum.py
+</pre>
+<p>Runs all 3 phases (warmup, main, stress) across 10 seeds. Results saved to <code>logs/curriculum_results.json</code>.</p>
+
+<h3>Custom Seeds</h3>
+<pre>
+python scripts/train_curriculum.py --seeds 42 100 200 --generations 5 --episodes 20
+</pre>
+
+<h3>Launch Dashboard</h3>
+<pre>
+tensorboard --logdir=logs/tensorboard --port=6006
+</pre>
+<p>Then open <code>http://localhost:6006</code> in your browser.</p>
+
+<h3>Run Tests</h3>
+<pre>
+python -m pytest tests/ -v
+</pre>
+
+<!-- ============================================================ -->
+<h2 id="architecture">10. Architecture</h2>
+
+<pre>
+hydra/
+  envs/              # Gymnasium RL environments
+    trading_env.py       Single-agent intraday environment
+    multi_agent_env.py   Multi-agent shared portfolio wrapper
+    reward.py            Differential Sharpe + penalties
+    state_builder.py     Observation vector construction
+    action_processor.py  Action -> order conversion
+    market_simulator.py  Numpy-optimized execution engine
+    session_manager.py   Session classification
+
+  agents/            # Agent pool
+    base_rl_agent.py     Abstract interface
+    ppo_agent.py         PPO (stable-baselines3)
+    sac_agent.py         SAC (stable-baselines3)
+    a2c_agent.py         A2C (stable-baselines3)
+    static_agent.py      Frozen snapshot
+    rule_based_agent.py  Legacy adapter
+    agent_pool.py        Population manager
+
+  training/          # Training pipeline
+    trainer.py           Core training loop
+    population_trainer.py Population-based training
+    curriculum.py        Pool composition schedule
+    metrics_tracker.py   TensorBoard logging
+
+  compute/           # CPU/GPU orchestration
+    decorators.py        @gpu_task, @cpu_task
+    workflow.py          DAG-based pipeline
+    resource_manager.py  Hardware detection
+
+  pipeline/          # End-to-end phases
+    data_prep.py         Phase 1: features
+    env_builder.py       Phase 2: environments
+    train_phase.py       Phase 3: RL training
+    eval_phase.py        Phase 4: backtesting
+    pool_update.py       Phase 5: agent ranking
+    validation_phase.py  Phase 6: ATHENA validation
+    orchestrator.py      Master controller
+
+  data/              # Data layer
+    adapter.py           Market data bridge
+    feature_store.py     Parquet + .npy cache
+    indicators.py        Vectorized RSI, MACD, etc.
+
+  risk/              # Risk management
+    env_constraints.py   In-environment limits
+    portfolio_risk.py    Portfolio monitoring
+
+  config/            # Configuration
+    schema.py            Pydantic validation
+    defaults.py          Default hyperparameters
+</pre>
+
+<div class="card highlight">
+  <h3>Key Design Principle</h3>
+  <p>Risk constraints are enforced <strong>inside the environment</strong>, not as post-processing. The agent experiences the consequences of violating limits (clipped actions, terminal states, zero reward) during training, so it learns to respect them naturally. This is fundamentally different from rule-based systems that apply limits after decisions are made.</p>
+</div>
+
+<footer>
+  <p>Hydra MARL System &mdash; Built with stable-baselines3, gymnasium, PyTorch, and numpy</p>
+  <p>Generated March 2026</p>
+</footer>
+
+</body>
+</html>

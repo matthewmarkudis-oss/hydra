@@ -62,16 +62,14 @@ def _get_device(prefer_gpu: bool = True) -> str:
 def _resolve_sb3_device(device_str: str) -> str:
     """Convert internal device string to one SB3 can use.
 
-    SB3 accepts 'cpu', 'cuda', 'cuda:0', or any torch.device.
-    For DirectML, we pass the actual torch device object string
-    so SB3 moves tensors to the GPU.
+    SB3 internally calls .numpy() on tensors, which requires CPU.
+    DirectML tensors can't be converted to numpy directly (unlike CUDA).
+    So SB3 models must run on CPU. The GPU is available for custom
+    tensor operations outside of SB3 via torch_directml.device().
     """
     if device_str == "dml":
-        try:
-            import torch_directml
-            return str(torch_directml.device())  # "privateuseone:0"
-        except (ImportError, TypeError, Exception):
-            return "cpu"
+        # SB3 not compatible with DirectML — use CPU for SB3 internals
+        return "cpu"
     return device_str
 
 

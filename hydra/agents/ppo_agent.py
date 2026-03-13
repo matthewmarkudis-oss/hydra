@@ -16,6 +16,31 @@ from hydra.agents.base_rl_agent import BaseRLAgent
 logger = logging.getLogger("hydra.agents.ppo")
 
 
+def _make_dummy_env(obs_space, action_space):
+    """Create a minimal gymnasium.Env to satisfy SB3 constructor.
+
+    SB3 does isinstance(env, gymnasium.Env), so we must subclass it.
+    We import gymnasium here to keep it lazy.
+    """
+    import gymnasium as gym
+
+    class _DummyEnv(gym.Env):
+        metadata = {"render_modes": []}
+
+        def __init__(self):
+            super().__init__()
+            self.observation_space = obs_space
+            self.action_space = action_space
+
+        def reset(self, *, seed=None, options=None):
+            return self.observation_space.sample(), {}
+
+        def step(self, action):
+            return self.observation_space.sample(), 0.0, False, False, {}
+
+    return _DummyEnv()
+
+
 def _get_device(prefer_gpu: bool = True) -> str:
     """Detect best available device (DirectML > CUDA > CPU)."""
     if prefer_gpu:
@@ -83,7 +108,6 @@ class PPOAgent(BaseRLAgent):
             import gymnasium as gym
             from stable_baselines3 import PPO
 
-            # Create a dummy env spec for SB3
             obs_space = gym.spaces.Box(
                 low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32,
             )
@@ -92,12 +116,12 @@ class PPOAgent(BaseRLAgent):
             )
 
             device = self._device if self._device != "dml" else "cpu"
-            # SB3 doesn't natively support DirectML device string,
-            # so we use CPU for SB3 internals and manually move tensors if needed
+
+            dummy_env = _make_dummy_env(obs_space, action_space)
 
             self._model = PPO(
                 "MlpPolicy",
-                env=None,
+                env=dummy_env,
                 learning_rate=self.learning_rate,
                 n_steps=self.n_steps,
                 batch_size=self.batch_size,
@@ -111,13 +135,6 @@ class PPOAgent(BaseRLAgent):
                 device=device,
                 verbose=0,
             )
-
-            # Override observation and action space
-            self._model.observation_space = obs_space
-            self._model.action_space = action_space
-
-            # Initialize policy network
-            self._model._setup_model()
 
         except ImportError as e:
             logger.error(f"stable-baselines3 not available: {e}")

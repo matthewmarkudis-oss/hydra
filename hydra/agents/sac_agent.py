@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from hydra.agents.base_rl_agent import BaseRLAgent
-from hydra.agents.ppo_agent import _get_device
+from hydra.agents.ppo_agent import _get_device, _make_dummy_env
 
 logger = logging.getLogger("hydra.agents.sac")
 
@@ -66,10 +66,11 @@ class SACAgent(BaseRLAgent):
             )
 
             device = self._device if self._device != "dml" else "cpu"
+            dummy_env = _make_dummy_env(obs_space, action_space)
 
             self._model = SAC(
                 "MlpPolicy",
-                env=None,
+                env=dummy_env,
                 learning_rate=self.learning_rate,
                 buffer_size=self.buffer_size,
                 batch_size=self.batch_size,
@@ -80,10 +81,6 @@ class SACAgent(BaseRLAgent):
                 device=device,
                 verbose=0,
             )
-
-            self._model.observation_space = obs_space
-            self._model.action_space = action_space
-            self._model._setup_model()
 
         except ImportError as e:
             logger.error(f"stable-baselines3 not available: {e}")

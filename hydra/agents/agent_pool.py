@@ -148,7 +148,7 @@ class AgentPool:
                 static = StaticAgent.from_agent(agent, name=f"{name}_gen{agent.episode_count}")
                 self.add(static)
                 promoted.append(static.name)
-                logger.info(f"Promoted '{name}' → '{static.name}' (score={score:.4f})")
+                logger.info(f"Promoted '{name}' -> '{static.name}' (score={score:.4f})")
 
         return promoted
 

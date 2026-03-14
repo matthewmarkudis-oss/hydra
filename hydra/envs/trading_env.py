@@ -27,7 +27,7 @@ from hydra.utils.numpy_opts import extract_ohlcv_arrays, SharedMarketData
 class TradingEnv(gym.Env):
     """Single-agent intraday trading environment.
 
-    Observation: float32 vector of dimension 8*num_stocks + 5.
+    Observation: float32 vector of dimension 12*num_stocks + 5.
     Action: continuous Box[-1, +1] per stock.
     Reward: Differential Sharpe + penalties.
     Episode: one trading day of 5-min bars.
@@ -270,7 +270,8 @@ class TradingEnv(gym.Env):
             for ticker in self._tickers:
                 ohlcv = self._market_data.get_ohlcv(ticker)
                 features = {**ohlcv}
-                for ind_name in ("rsi", "macd_hist", "cci", "bb_pct_b", "volume_ratio", "trend_direction"):
+                for ind_name in ("rsi", "macd_hist", "cci", "bb_pct_b", "volume_ratio", "trend_direction",
+                                "bar_body_ratio", "close_range_position", "bar_momentum", "upper_wick_ratio"):
                     try:
                         features[ind_name] = self._market_data.get_indicator(ticker, ind_name)
                     except KeyError:

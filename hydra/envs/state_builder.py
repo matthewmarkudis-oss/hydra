@@ -14,28 +14,32 @@ class StateBuilder:
     """Constructs the observation vector for the RL agent.
 
     Observation layout (per num_stocks=N):
-        [0]          cash_ratio          (cash / initial_cash)
-        [1:N+1]      holdings            (shares held per stock, normalized)
-        [N+1:2N+1]   prices              (current close / episode start close)
-        [2N+1:3N+1]  rsi                 (RSI / 100, so in [0, 1])
-        [3N+1:4N+1]  macd_hist           (MACD histogram, z-scored)
-        [4N+1:5N+1]  cci                 (CCI / 200, clipped to [-1, 1])
-        [5N+1:6N+1]  bb_pct_b            (Bollinger %B, already [0, 1])
-        [6N+1:7N+1]  volume_ratio        (vol / avg_vol, clipped to [0, 5])
-        [7N+1:8N+1]  trend_direction     (SMA20/SMA50 crossover: -1, 0, +1)
-        [8N+1]       drawdown            (current drawdown, negative)
-        [8N+2]       daily_pnl           (today's P&L as fraction of initial)
-        [8N+3]       session_label       (session type / 6.0, normalized to ~[0, 1])
-        [8N+4]       time_progress       (bar_index / total_bars, [0, 1])
+        [0]            cash_ratio          (cash / initial_cash)
+        [1:N+1]        holdings            (shares held per stock, normalized)
+        [N+1:2N+1]     prices              (current close / episode start close)
+        [2N+1:3N+1]    rsi                 (RSI / 100, so in [0, 1])
+        [3N+1:4N+1]    macd_hist           (MACD histogram, z-scored)
+        [4N+1:5N+1]    cci                 (CCI / 200, clipped to [-1, 1])
+        [5N+1:6N+1]    bb_pct_b            (Bollinger %B, already [0, 1])
+        [6N+1:7N+1]    volume_ratio        (vol / avg_vol, clipped to [0, 5])
+        [7N+1:8N+1]    trend_direction     (SMA20/SMA50 crossover: -1, 0, +1)
+        [8N+1:9N+1]    bar_body_ratio      (bar direction/conviction, [-1, 1])
+        [9N+1:10N+1]   close_range_pos     (settlement strength, [0, 1])
+        [10N+1:11N+1]  bar_momentum        (ATR-normalized momentum, [-1, 1])
+        [11N+1:12N+1]  upper_wick_ratio    (rejection at highs, [0, 1])
+        [12N+1]        drawdown            (current drawdown, negative)
+        [12N+2]        daily_pnl           (today's P&L as fraction of initial)
+        [12N+3]        session_label       (session type / 6.0, normalized to ~[0, 1])
+        [12N+4]        time_progress       (bar_index / total_bars, [0, 1])
 
-    Total dims = 1 + 8*N + 4 = 8*N + 5
+    Total dims = 1 + 12*N + 4 = 12*N + 5
     """
 
     def __init__(self, num_stocks: int, episode_bars: int = 78, normalize: bool = True):
         self.num_stocks = num_stocks
         self.episode_bars = episode_bars
         self.normalize = normalize
-        self.obs_dim = 8 * num_stocks + 5
+        self.obs_dim = 12 * num_stocks + 5
 
         # Pre-computed episode data (set at episode start)
         self._close_matrix: np.ndarray | None = None  # (bars, stocks)
@@ -45,6 +49,10 @@ class StateBuilder:
         self._bb_matrix: np.ndarray | None = None
         self._vol_matrix: np.ndarray | None = None
         self._trend_matrix: np.ndarray | None = None
+        self._body_ratio_matrix: np.ndarray | None = None
+        self._close_range_matrix: np.ndarray | None = None
+        self._momentum_matrix: np.ndarray | None = None
+        self._upper_wick_matrix: np.ndarray | None = None
         self._session_labels: np.ndarray | None = None
         self._start_prices: np.ndarray | None = None
 
@@ -92,6 +100,22 @@ class StateBuilder:
             [features[t].get("trend_direction", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
         ).astype(np.float32)
 
+        self._body_ratio_matrix = np.column_stack(
+            [features[t].get("bar_body_ratio", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
+        self._close_range_matrix = np.column_stack(
+            [features[t].get("close_range_position", np.full(bars, 0.5, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
+        self._momentum_matrix = np.column_stack(
+            [features[t].get("bar_momentum", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
+        self._upper_wick_matrix = np.column_stack(
+            [features[t].get("upper_wick_ratio", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
         self._session_labels = session_labels if session_labels is not None else np.zeros(bars, dtype=np.int8)
         self._start_prices = self._close_matrix[0].copy()
 
@@ -102,6 +126,10 @@ class StateBuilder:
         np.nan_to_num(self._bb_matrix, copy=False, nan=0.5)
         np.nan_to_num(self._vol_matrix, copy=False, nan=1.0)
         np.nan_to_num(self._trend_matrix, copy=False, nan=0.0)
+        np.nan_to_num(self._body_ratio_matrix, copy=False, nan=0.0)
+        np.nan_to_num(self._close_range_matrix, copy=False, nan=0.5)
+        np.nan_to_num(self._momentum_matrix, copy=False, nan=0.0)
+        np.nan_to_num(self._upper_wick_matrix, copy=False, nan=0.0)
 
     def build(
         self,
@@ -157,8 +185,14 @@ class StateBuilder:
         # Trend direction (already -1, 0, +1)
         obs[7 * n + 1:8 * n + 1] = self._trend_matrix[step]
 
+        # Price action indicators
+        obs[8 * n + 1:9 * n + 1] = self._body_ratio_matrix[step]
+        obs[9 * n + 1:10 * n + 1] = self._close_range_matrix[step]
+        obs[10 * n + 1:11 * n + 1] = self._momentum_matrix[step]
+        obs[11 * n + 1:12 * n + 1] = self._upper_wick_matrix[step]
+
         # Global features
-        idx = 8 * n + 1
+        idx = 12 * n + 1
         drawdown = (portfolio_value - peak_value) / max(peak_value, 1e-8)
         obs[idx] = np.float32(drawdown)
 

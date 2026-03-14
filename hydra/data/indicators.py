@@ -163,6 +163,105 @@ def trend_direction(close: np.ndarray, fast_period: int = 20, slow_period: int =
     return out.astype(np.float32)
 
 
+def bar_body_ratio(
+    open_: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+) -> np.ndarray:
+    """Bar body ratio: (close - open) / bar range.
+
+    Measures direction and conviction of each bar.
+    Positive = bullish, negative = bearish, magnitude = strength.
+    Flat bars (high == low) → 0.0.
+
+    Returns:
+        Float32 array in [-1, 1]. No warmup, no NaN.
+    """
+    bar_range = high - low
+    eps = np.float32(1e-10)
+    ratio = (close - open_) / np.maximum(bar_range, eps)
+    return np.clip(ratio, -1.0, 1.0).astype(np.float32)
+
+
+def close_range_position(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+) -> np.ndarray:
+    """Close range position: where close settled within the bar's range.
+
+    Near 1.0 = closed near high (bullish), near 0.0 = closed near low (bearish).
+    Flat bars (high == low) → 0.5 (neutral).
+
+    Returns:
+        Float32 array in [0, 1]. No warmup, no NaN.
+    """
+    bar_range = high - low
+    eps = np.float32(1e-10)
+    return np.where(
+        bar_range > eps,
+        (close - low) / np.maximum(bar_range, eps),
+        np.float32(0.5),
+    ).astype(np.float32)
+
+
+def bar_momentum(
+    close: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    atr_period: int = 14,
+    atr_values: np.ndarray | None = None,
+) -> np.ndarray:
+    """ATR-normalized bar-over-bar momentum.
+
+    Measures directional move relative to recent volatility.
+    First `atr_period` bars are NaN (from ATR warmup).
+
+    Args:
+        close: Close prices.
+        high: High prices.
+        low: Low prices.
+        atr_period: ATR lookback period.
+        atr_values: Optional pre-computed ATR to avoid recomputation.
+
+    Returns:
+        Float32 array in [-1, 1] (clipped). First atr_period bars NaN.
+    """
+    atr_vals = atr_values if atr_values is not None else atr(high, low, close, atr_period)
+    eps = np.float32(1e-10)
+
+    delta = np.empty_like(close)
+    delta[0] = np.nan
+    delta[1:] = close[1:] - close[:-1]
+
+    momentum = delta / np.maximum(atr_vals, eps)
+    momentum = np.clip(momentum, -1.0, 1.0)
+    # Preserve NaN from ATR warmup
+    momentum[:atr_period] = np.nan
+    return momentum.astype(np.float32)
+
+
+def upper_wick_ratio(
+    open_: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+) -> np.ndarray:
+    """Upper wick ratio: upper shadow relative to bar range.
+
+    Large upper wick = rejection at highs, potential reversal signal.
+    Flat bars (high == low) → 0.0.
+
+    Returns:
+        Float32 array in [0, 1]. No warmup, no NaN.
+    """
+    bar_range = high - low
+    eps = np.float32(1e-10)
+    upper_shadow = np.maximum(high - np.maximum(open_, close), np.float32(0.0))
+    return (upper_shadow / np.maximum(bar_range, eps)).astype(np.float32)
+
+
 def compute_all_indicators(
     ohlcv: dict[str, np.ndarray],
 ) -> dict[str, np.ndarray]:
@@ -174,12 +273,14 @@ def compute_all_indicators(
     Returns:
         Dict of indicator name → float32 array.
     """
+    o = ohlcv["open"]
     c = ohlcv["close"]
     h = ohlcv["high"]
     l = ohlcv["low"]
     v = ohlcv["volume"]
 
     macd_line, macd_signal, macd_hist = macd(c)
+    atr_vals = atr(h, l, c)
 
     return {
         "rsi": rsi(c),
@@ -189,8 +290,12 @@ def compute_all_indicators(
         "cci": cci(h, l, c),
         "bb_pct_b": bollinger_pct_b(c),
         "volume_ratio": volume_ratio(v),
-        "atr": atr(h, l, c),
+        "atr": atr_vals,
         "trend_direction": trend_direction(c),
+        "bar_body_ratio": bar_body_ratio(o, h, l, c),
+        "close_range_position": close_range_position(h, l, c),
+        "bar_momentum": bar_momentum(c, h, l, atr_values=atr_vals),
+        "upper_wick_ratio": upper_wick_ratio(o, h, l, c),
     }
 
 

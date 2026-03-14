@@ -7,7 +7,10 @@ import pytest
 
 from hydra.config.schema import HydraConfig
 from hydra.data.adapter import generate_synthetic_bars
-from hydra.data.indicators import compute_all_indicators, rsi, macd, cci, bollinger_pct_b, volume_ratio
+from hydra.data.indicators import (
+    compute_all_indicators, rsi, macd, cci, bollinger_pct_b, volume_ratio,
+    bar_body_ratio, close_range_position, bar_momentum, upper_wick_ratio,
+)
 from hydra.envs.market_simulator import MarketSimulator
 from hydra.envs.session_manager import SessionManager
 from hydra.envs.state_builder import StateBuilder
@@ -48,6 +51,63 @@ class TestIndicators:
         result = volume_ratio(synthetic_ohlcv["volume"])
         assert result.dtype == np.float32
 
+    def test_bar_body_ratio(self, synthetic_ohlcv):
+        result = bar_body_ratio(
+            synthetic_ohlcv["open"], synthetic_ohlcv["high"],
+            synthetic_ohlcv["low"], synthetic_ohlcv["close"],
+        )
+        assert result.dtype == np.float32
+        assert len(result) == len(synthetic_ohlcv["close"])
+        assert np.all(np.isfinite(result))
+        assert np.all(result >= -1.0) and np.all(result <= 1.0)
+
+    def test_close_range_position(self, synthetic_ohlcv):
+        result = close_range_position(
+            synthetic_ohlcv["high"], synthetic_ohlcv["low"], synthetic_ohlcv["close"],
+        )
+        assert result.dtype == np.float32
+        assert len(result) == len(synthetic_ohlcv["close"])
+        assert np.all(np.isfinite(result))
+        assert np.all(result >= 0.0) and np.all(result <= 1.0)
+
+    def test_bar_momentum(self, synthetic_ohlcv):
+        result = bar_momentum(
+            synthetic_ohlcv["close"], synthetic_ohlcv["high"], synthetic_ohlcv["low"],
+        )
+        assert result.dtype == np.float32
+        assert len(result) == len(synthetic_ohlcv["close"])
+        # First 14 bars should be NaN (ATR warmup)
+        assert np.all(np.isnan(result[:14]))
+        valid = result[~np.isnan(result)]
+        assert np.all(valid >= -1.0) and np.all(valid <= 1.0)
+
+    def test_upper_wick_ratio(self, synthetic_ohlcv):
+        result = upper_wick_ratio(
+            synthetic_ohlcv["open"], synthetic_ohlcv["high"],
+            synthetic_ohlcv["low"], synthetic_ohlcv["close"],
+        )
+        assert result.dtype == np.float32
+        assert len(result) == len(synthetic_ohlcv["close"])
+        assert np.all(np.isfinite(result))
+        assert np.all(result >= 0.0) and np.all(result <= 1.0)
+
+    def test_price_action_flat_bar(self):
+        """Verify flat bar edge case returns correct neutral values."""
+        n = 5
+        o = np.array([100.0] * n, dtype=np.float32)
+        h = np.array([100.0] * n, dtype=np.float32)
+        l = np.array([100.0] * n, dtype=np.float32)
+        c = np.array([100.0] * n, dtype=np.float32)
+
+        body = bar_body_ratio(o, h, l, c)
+        np.testing.assert_array_almost_equal(body, 0.0)
+
+        crp = close_range_position(h, l, c)
+        np.testing.assert_array_almost_equal(crp, 0.5)
+
+        wick = upper_wick_ratio(o, h, l, c)
+        np.testing.assert_array_almost_equal(wick, 0.0)
+
     def test_compute_all(self, synthetic_ohlcv):
         indicators = compute_all_indicators(synthetic_ohlcv)
         assert "rsi" in indicators
@@ -56,6 +116,10 @@ class TestIndicators:
         assert "bb_pct_b" in indicators
         assert "volume_ratio" in indicators
         assert "atr" in indicators
+        assert "bar_body_ratio" in indicators
+        assert "close_range_position" in indicators
+        assert "bar_momentum" in indicators
+        assert "upper_wick_ratio" in indicators
 
 
 class TestMarketSimulator:
@@ -115,7 +179,7 @@ class TestSessionManager:
 class TestStateBuilder:
     def test_obs_dim(self):
         sb = StateBuilder(num_stocks=5)
-        assert sb.obs_dim == 8 * 5 + 5  # 45
+        assert sb.obs_dim == 12 * 5 + 5  # 65
 
     def test_build(self, synthetic_features):
         sb = StateBuilder(num_stocks=1, episode_bars=78)

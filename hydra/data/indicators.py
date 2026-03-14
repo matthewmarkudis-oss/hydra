@@ -147,6 +147,22 @@ def atr(
     return out
 
 
+def trend_direction(close: np.ndarray, fast_period: int = 20, slow_period: int = 50) -> np.ndarray:
+    """Trend direction via SMA crossover.
+
+    Returns +1 (bullish: fast SMA > slow SMA), -1 (bearish), or 0 (neutral/warmup).
+    """
+    fast_sma = _sma(close, fast_period)
+    slow_sma = _sma(close, slow_period)
+
+    out = np.zeros_like(close)
+    valid = ~(np.isnan(fast_sma) | np.isnan(slow_sma))
+    diff = fast_sma - slow_sma
+    out[valid & (diff > 0)] = np.float32(1.0)
+    out[valid & (diff < 0)] = np.float32(-1.0)
+    return out.astype(np.float32)
+
+
 def compute_all_indicators(
     ohlcv: dict[str, np.ndarray],
 ) -> dict[str, np.ndarray]:
@@ -174,6 +190,7 @@ def compute_all_indicators(
         "bb_pct_b": bollinger_pct_b(c),
         "volume_ratio": volume_ratio(v),
         "atr": atr(h, l, c),
+        "trend_direction": trend_direction(c),
     }
 
 

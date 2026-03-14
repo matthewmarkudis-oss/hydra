@@ -21,15 +21,17 @@ class DifferentialSharpeReward:
 
     def __init__(
         self,
-        eta: float = 0.001,
+        eta: float = 0.05,
         drawdown_penalty: float = 2.0,
         transaction_penalty: float = 0.5,
         holding_penalty: float = 0.0,
+        reward_scale: float = 100.0,
     ):
         self.eta = np.float32(eta)
         self.drawdown_penalty = np.float32(drawdown_penalty)
         self.transaction_penalty = np.float32(transaction_penalty)
         self.holding_penalty = np.float32(holding_penalty)
+        self.reward_scale = np.float32(reward_scale)
 
         # EMA state for differential Sharpe
         self._ema_return = np.float32(0.0)
@@ -105,6 +107,7 @@ class DifferentialSharpeReward:
                 hold_penalty = -float(self.holding_penalty) * (max_weight - 0.15)
 
         total_reward = sharpe_reward + dd_penalty + tc_penalty + hold_penalty
+        total_reward *= float(self.reward_scale)
 
         self._prev_portfolio_value = pv
 

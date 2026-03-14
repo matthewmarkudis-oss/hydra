@@ -112,7 +112,12 @@ class MultiAgentEnv:
         return next_obs, reward, terminated, truncated, info
 
     def _aggregate_actions(self, per_agent_actions: dict[str, np.ndarray]) -> np.ndarray:
-        """Aggregate per-agent actions into a single action via weighted mean."""
+        """Aggregate per-agent actions into a single action via weighted mean.
+
+        Includes magnitude-preserving rescaling: averaging across many agents
+        dilutes action magnitude. We rescale the aggregated action toward the
+        maximum individual agent signal (capped at 3x to prevent noise amplification).
+        """
         if not per_agent_actions:
             return np.zeros(self.env.action_space.shape, dtype=np.float32)
 
@@ -121,6 +126,21 @@ class MultiAgentEnv:
 
         action_matrix = np.stack([per_agent_actions[n] for n in names])
         aggregated = np.average(action_matrix, axis=0, weights=weights)
+
+        # Magnitude-preserving rescaling
+        max_abs_per_stock = np.max(np.abs(action_matrix), axis=0)
+        agg_abs = np.abs(aggregated)
+        # Only rescale where at least one agent has meaningful signal
+        meaningful = max_abs_per_stock > 0.01
+        if np.any(meaningful):
+            scale = np.ones_like(aggregated)
+            safe_agg = np.where(agg_abs > 1e-8, agg_abs, np.float32(1.0))
+            scale[meaningful] = np.minimum(
+                max_abs_per_stock[meaningful] / safe_agg[meaningful],
+                np.float32(3.0),
+            )
+            aggregated = aggregated * scale
+
         return np.clip(aggregated, -1.0, 1.0).astype(np.float32)
 
     def collect_experience(

@@ -27,7 +27,7 @@ from hydra.utils.numpy_opts import extract_ohlcv_arrays, SharedMarketData
 class TradingEnv(gym.Env):
     """Single-agent intraday trading environment.
 
-    Observation: float32 vector of dimension 7*num_stocks + 4.
+    Observation: float32 vector of dimension 8*num_stocks + 5.
     Action: continuous Box[-1, +1] per stock.
     Reward: Differential Sharpe + penalties.
     Episode: one trading day of 5-min bars.
@@ -42,16 +42,17 @@ class TradingEnv(gym.Env):
         episode_bars: int = 78,
         initial_cash: float = 100_000.0,
         transaction_cost_bps: float = 5.0,
-        slippage_bps: float = 10.0,
-        spread_bps: float = 2.0,
+        slippage_bps: float = 2.0,
+        spread_bps: float = 1.0,
         max_position_pct: float = 0.10,
         max_drawdown_pct: float = 0.10,
         max_daily_loss_pct: float = 0.03,
-        sharpe_eta: float = 0.001,
+        sharpe_eta: float = 0.05,
         drawdown_penalty: float = 2.0,
         transaction_penalty: float = 0.5,
         holding_penalty: float = 0.0,
-        dead_zone: float = 0.05,
+        reward_scale: float = 100.0,
+        dead_zone: float = 0.0,
         normalize_obs: bool = True,
         seed: int | None = None,
         render_mode: str | None = None,
@@ -90,6 +91,7 @@ class TradingEnv(gym.Env):
             drawdown_penalty=drawdown_penalty,
             transaction_penalty=transaction_penalty,
             holding_penalty=holding_penalty,
+            reward_scale=reward_scale,
         )
 
         self.state_builder = StateBuilder(
@@ -225,9 +227,9 @@ class TradingEnv(gym.Env):
         terminated = False
         truncated = should_truncate or (self._step_count >= self.episode_bars)
 
-        # If halted by constraints, zero out reward to penalize
+        # If halted by constraints, apply negative penalty (preserves learning signal)
         if is_halted and not should_truncate:
-            reward = 0.0
+            reward = min(reward, -0.01 * float(self.reward_fn.reward_scale))
 
         # Build next observation
         obs_step = min(self._step_count, self.episode_bars - 1)
@@ -268,7 +270,7 @@ class TradingEnv(gym.Env):
             for ticker in self._tickers:
                 ohlcv = self._market_data.get_ohlcv(ticker)
                 features = {**ohlcv}
-                for ind_name in ("rsi", "macd_hist", "cci", "bb_pct_b", "volume_ratio"):
+                for ind_name in ("rsi", "macd_hist", "cci", "bb_pct_b", "volume_ratio", "trend_direction"):
                     try:
                         features[ind_name] = self._market_data.get_indicator(ticker, ind_name)
                     except KeyError:

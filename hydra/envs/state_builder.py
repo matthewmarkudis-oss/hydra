@@ -22,19 +22,20 @@ class StateBuilder:
         [4N+1:5N+1]  cci                 (CCI / 200, clipped to [-1, 1])
         [5N+1:6N+1]  bb_pct_b            (Bollinger %B, already [0, 1])
         [6N+1:7N+1]  volume_ratio        (vol / avg_vol, clipped to [0, 5])
-        [7N+1]       drawdown            (current drawdown, negative)
-        [7N+2]       daily_pnl           (today's P&L as fraction of initial)
-        [7N+3]       session_label       (session type / 6.0, normalized to ~[0, 1])
-        [7N+4]       time_progress       (bar_index / total_bars, [0, 1])
+        [7N+1:8N+1]  trend_direction     (SMA20/SMA50 crossover: -1, 0, +1)
+        [8N+1]       drawdown            (current drawdown, negative)
+        [8N+2]       daily_pnl           (today's P&L as fraction of initial)
+        [8N+3]       session_label       (session type / 6.0, normalized to ~[0, 1])
+        [8N+4]       time_progress       (bar_index / total_bars, [0, 1])
 
-    Total dims = 1 + 7*N + 4 = 7*N + 5
+    Total dims = 1 + 8*N + 4 = 8*N + 5
     """
 
     def __init__(self, num_stocks: int, episode_bars: int = 78, normalize: bool = True):
         self.num_stocks = num_stocks
         self.episode_bars = episode_bars
         self.normalize = normalize
-        self.obs_dim = 7 * num_stocks + 5
+        self.obs_dim = 8 * num_stocks + 5
 
         # Pre-computed episode data (set at episode start)
         self._close_matrix: np.ndarray | None = None  # (bars, stocks)
@@ -43,6 +44,7 @@ class StateBuilder:
         self._cci_matrix: np.ndarray | None = None
         self._bb_matrix: np.ndarray | None = None
         self._vol_matrix: np.ndarray | None = None
+        self._trend_matrix: np.ndarray | None = None
         self._session_labels: np.ndarray | None = None
         self._start_prices: np.ndarray | None = None
 
@@ -86,6 +88,10 @@ class StateBuilder:
             [features[t]["volume_ratio"][:bars] for t in tickers]
         ).astype(np.float32)
 
+        self._trend_matrix = np.column_stack(
+            [features[t].get("trend_direction", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
         self._session_labels = session_labels if session_labels is not None else np.zeros(bars, dtype=np.int8)
         self._start_prices = self._close_matrix[0].copy()
 
@@ -95,6 +101,7 @@ class StateBuilder:
         np.nan_to_num(self._cci_matrix, copy=False, nan=0.0)
         np.nan_to_num(self._bb_matrix, copy=False, nan=0.5)
         np.nan_to_num(self._vol_matrix, copy=False, nan=1.0)
+        np.nan_to_num(self._trend_matrix, copy=False, nan=0.0)
 
     def build(
         self,
@@ -147,8 +154,11 @@ class StateBuilder:
         # Volume ratio (clipped to [0, 5], then /5 to normalize)
         obs[6 * n + 1:7 * n + 1] = np.clip(self._vol_matrix[step], 0.0, 5.0) / np.float32(5.0)
 
+        # Trend direction (already -1, 0, +1)
+        obs[7 * n + 1:8 * n + 1] = self._trend_matrix[step]
+
         # Global features
-        idx = 7 * n + 1
+        idx = 8 * n + 1
         drawdown = (portfolio_value - peak_value) / max(peak_value, 1e-8)
         obs[idx] = np.float32(drawdown)
 

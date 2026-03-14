@@ -16,8 +16,8 @@ class EnvConfig(BaseModel):
     bar_interval_minutes: int = Field(default=5)
     initial_cash: float = Field(default=100_000.0, gt=0)
     transaction_cost_bps: float = Field(default=5.0, ge=0, description="Transaction cost in basis points")
-    slippage_bps: float = Field(default=10.0, ge=0, description="Slippage in basis points")
-    spread_bps: float = Field(default=2.0, ge=0, description="Bid-ask spread in basis points")
+    slippage_bps: float = Field(default=2.0, ge=0, description="Slippage in basis points")
+    spread_bps: float = Field(default=1.0, ge=0, description="Bid-ask spread in basis points")
     max_position_pct: float = Field(default=0.10, gt=0, le=1.0)
     max_drawdown_pct: float = Field(default=0.10, gt=0, le=1.0)
     max_daily_loss_pct: float = Field(default=0.03, gt=0, le=1.0)
@@ -28,10 +28,11 @@ class RewardConfig(BaseModel):
     """Reward function configuration."""
 
     sharpe_window: int = Field(default=20, ge=2)
-    sharpe_eta: float = Field(default=0.001, gt=0, description="Differential Sharpe EMA decay")
+    sharpe_eta: float = Field(default=0.05, gt=0, description="Differential Sharpe EMA decay")
     drawdown_penalty: float = Field(default=2.0, ge=0)
     transaction_penalty: float = Field(default=0.5, ge=0)
     holding_penalty: float = Field(default=0.0, ge=0, description="Penalty for large positions")
+    reward_scale: float = Field(default=100.0, gt=0, description="Multiplier for reward signal magnitude")
 
 
 class AgentConfig(BaseModel):

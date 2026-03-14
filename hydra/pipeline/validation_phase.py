@@ -1,7 +1,8 @@
 """Phase 6: ATHENA-style walk-forward validation with bootstrap CI and deflated Sharpe.
 
 Validates trained RL agents against the same statistical criteria applied
-to the existing trading_agents system. Backtesting only.
+to the existing trading_agents system. Uses ported ATHENA DSR/PSR and
+KRONOS WFE overfitting detection. Backtesting only.
 """
 
 from __future__ import annotations
@@ -14,6 +15,16 @@ import numpy as np
 from hydra.agents.agent_pool import AgentPool
 from hydra.compute.decorators import cpu_task
 from hydra.envs.trading_env import TradingEnv
+from hydra.evaluation.statistical_tests import (
+    bootstrap_sharpe_ci,
+    compute_wfe,
+    deflated_sharpe_ratio,
+    diagnose_wfe,
+    probabilistic_sharpe_ratio,
+    return_statistics,
+    run_full_calibration,
+)
+from hydra.evaluation.fitness import AgentFitness, compute_fitness, rank_agents
 
 logger = logging.getLogger("hydra.pipeline.validation")
 
@@ -80,7 +91,10 @@ def run_validation(
         status = "PASS" if passed else "FAIL"
         logger.info(
             f"  {agent.name}: {status} | sharpe={agent_result['sharpe']:.3f}, "
-            f"mdd={agent_result['max_drawdown']:.2%}, wr={agent_result['win_rate']:.2%}"
+            f"mdd={agent_result['max_drawdown']:.2%}, wr={agent_result['win_rate']:.2%}, "
+            f"WFE={agent_result['wfe']:.2f}, PSR={agent_result.get('psr', 0):.3f}, "
+            f"DSR={agent_result.get('dsr', 0):.3f}, "
+            f"fitness={agent_result.get('fitness_score', 0):.4f}"
         )
 
     passed_agents = [n for n, r in results.items() if r.get("passed")]
@@ -100,12 +114,16 @@ def _validate_agent(
     bootstrap_samples: int,
     confidence_level: float,
 ) -> dict[str, Any]:
-    """Validate a single agent across walk-forward windows."""
+    """Validate a single agent across walk-forward windows.
+
+    Uses ported ATHENA DSR/PSR, KRONOS WFE, and CHIMERA fitness decomposition.
+    """
     window_returns = []
     window_sharpes = []
     all_step_returns = []
     winning_steps = 0
     total_steps = 0
+    total_trades = 0
 
     episodes_per_window = max(5, 20 // num_windows)
 
@@ -133,6 +151,8 @@ def _validate_agent(
                     summary = step_info.get("episode_summary", {})
                     window_sharpes.append(summary.get("sharpe_ratio", 0.0))
                     window_returns.append(summary.get("total_return", 0.0))
+                    # Use actual executed trade count from MarketSimulator
+                    total_trades += step_info.get("num_trades", 0)
                     break
 
     # Aggregate metrics
@@ -146,27 +166,69 @@ def _validate_agent(
     gross_loss = float(np.abs(np.sum(returns_arr[returns_arr < 0]))) if np.any(returns_arr < 0) else 1e-8
     profit_factor = gross_profit / max(gross_loss, 1e-8)
 
-    # Walk-forward efficiency
-    wfe = _compute_wfe(window_sharpes) if len(window_sharpes) >= 2 else 0.0
+    # --- KRONOS WFE overfitting detection ---
+    wfe_val = 0.0
+    wfe_diagnosis = {"severity": "no_data", "diagnosis": "N/A", "recommendation": "N/A"}
+    if len(window_sharpes) >= 2:
+        mid = len(window_sharpes) // 2
+        is_sharpe = float(np.mean(window_sharpes[:mid]))
+        oos_sharpe = float(np.mean(window_sharpes[mid:]))
+        wfe_val = compute_wfe(oos_sharpe, is_sharpe)
+        wfe_diagnosis = diagnose_wfe(wfe_val)
 
-    # Bootstrap confidence interval for Sharpe
-    ci_low, ci_high = _bootstrap_ci(window_sharpes, bootstrap_samples, confidence_level)
+    # --- ATHENA statistical calibration ---
+    calibration = None
+    if len(returns_arr) >= 10:
+        calibration = run_full_calibration(
+            oos_returns=returns_arr,
+            n_trials=max(num_windows, 2),
+            confidence=confidence_level,
+            n_bootstrap=bootstrap_samples,
+            is_sharpe=is_sharpe if len(window_sharpes) >= 2 else None,
+        )
 
-    # Deflated Sharpe ratio
-    dsr = _deflated_sharpe(sharpe, len(window_sharpes), np.std(window_sharpes) if window_sharpes else 1.0)
+    # Extract PSR/DSR from calibration
+    psr_val = calibration["probabilistic_sharpe"]["psr"] if calibration else 0.0
+    dsr_val = calibration["deflated_sharpe"]["dsr"] if calibration else 0.0
+    ci_low = calibration["bootstrap"]["ci_lower"] if calibration else 0.0
+    ci_high = calibration["bootstrap"]["ci_upper"] if calibration else 0.0
+
+    # --- CHIMERA fitness decomposition ---
+    consistency = sum(1 for s in window_sharpes if s > 0) / max(len(window_sharpes), 1)
+    agent_fitness = AgentFitness(
+        agent_name=agent.name,
+        sharpe=sharpe,
+        max_drawdown=max_dd,
+        profit_factor=profit_factor,
+        wfe=wfe_val,
+        consistency=consistency,
+        window_sharpes=window_sharpes,
+        total_trades=total_trades,
+        total_return=float(np.mean(window_returns)) if window_returns else 0.0,
+        win_rate=win_rate,
+    )
+    fitness_score, fitness_breakdown = compute_fitness(agent_fitness)
 
     return {
         "sharpe": sharpe,
         "sharpe_ci_low": ci_low,
         "sharpe_ci_high": ci_high,
-        "deflated_sharpe": dsr,
+        "psr": psr_val,
+        "dsr": dsr_val,
+        "deflated_sharpe": dsr_val,
         "max_drawdown": max_dd,
         "win_rate": win_rate,
         "profit_factor": profit_factor,
-        "wfe": wfe,
+        "wfe": wfe_val,
+        "wfe_diagnosis": wfe_diagnosis,
+        "fitness_score": fitness_score,
+        "fitness_breakdown": fitness_breakdown,
+        "calibration_verdict": calibration["verdict"] if calibration else "N/A",
         "total_return": float(np.mean(window_returns)) if window_returns else 0.0,
         "num_windows": num_windows,
         "total_steps": total_steps,
+        "total_trades": total_trades,
+        "consistency": consistency,
     }
 
 
@@ -196,55 +258,10 @@ def _compute_max_drawdown(returns: np.ndarray) -> float:
 
 
 def _compute_wfe(window_sharpes: list[float]) -> float:
-    """Walk-forward efficiency: ratio of OOS to IS performance."""
+    """Walk-forward efficiency — legacy wrapper, uses hydra.evaluation.statistical_tests."""
     if len(window_sharpes) < 2:
         return 0.0
-    # Simple: ratio of later windows to earlier windows
     mid = len(window_sharpes) // 2
-    is_sharpe = np.mean(window_sharpes[:mid])
-    oos_sharpe = np.mean(window_sharpes[mid:])
-    if abs(is_sharpe) < 1e-8:
-        return 0.0
-    return float(oos_sharpe / is_sharpe) if is_sharpe > 0 else 0.0
-
-
-def _bootstrap_ci(
-    values: list[float],
-    num_samples: int = 2000,
-    confidence: float = 0.95,
-) -> tuple[float, float]:
-    """Bootstrap confidence interval."""
-    if len(values) < 2:
-        return 0.0, 0.0
-
-    arr = np.array(values, dtype=np.float32)
-    rng = np.random.default_rng(42)
-    boot_means = np.array([
-        np.mean(rng.choice(arr, size=len(arr), replace=True))
-        for _ in range(num_samples)
-    ])
-
-    alpha = 1 - confidence
-    low = float(np.percentile(boot_means, 100 * alpha / 2))
-    high = float(np.percentile(boot_means, 100 * (1 - alpha / 2)))
-    return low, high
-
-
-def _deflated_sharpe(sharpe: float, num_trials: int, std_sharpe: float) -> float:
-    """Deflated Sharpe Ratio — adjusts for multiple testing.
-
-    Based on Bailey & Lopez de Prado (2014).
-    """
-    if num_trials <= 1 or std_sharpe < 1e-8:
-        return sharpe
-
-    # Expected max Sharpe under null hypothesis
-    from math import log, sqrt
-    euler_mascheroni = 0.5772
-    expected_max = std_sharpe * (
-        sqrt(2 * log(num_trials)) - (log(log(num_trials)) + log(4 * 3.14159)) / (2 * sqrt(2 * log(num_trials)))
-    )
-
-    # DSR: probability that observed Sharpe exceeds expected max
-    z = (sharpe - expected_max) / max(std_sharpe, 1e-8)
-    return float(z)
+    is_sharpe = float(np.mean(window_sharpes[:mid]))
+    oos_sharpe = float(np.mean(window_sharpes[mid:]))
+    return compute_wfe(oos_sharpe, is_sharpe)

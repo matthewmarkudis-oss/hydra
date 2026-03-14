@@ -23,7 +23,7 @@ class DifferentialSharpeReward:
         self,
         eta: float = 0.05,
         drawdown_penalty: float = 2.0,
-        transaction_penalty: float = 0.5,
+        transaction_penalty: float = 0.1,
         holding_penalty: float = 0.0,
         reward_scale: float = 100.0,
     ):
@@ -105,6 +105,11 @@ class DifferentialSharpeReward:
             max_weight = float(np.max(position_values)) / total_value
             if max_weight > 0.15:  # Penalize >15% concentration
                 hold_penalty = -float(self.holding_penalty) * (max_weight - 0.15)
+
+            # Idle cash penalty: penalize holding too much cash
+            cash_ratio = float(self._prev_portfolio_value - np.sum(np.abs(holdings * prices))) / max(float(self._prev_portfolio_value), 1e-8)
+            if cash_ratio > 0.8:
+                hold_penalty += -float(self.holding_penalty) * (cash_ratio - 0.8)
 
         total_reward = sharpe_reward + dd_penalty + tc_penalty + hold_penalty
         total_reward *= float(self.reward_scale)

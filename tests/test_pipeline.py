@@ -12,8 +12,10 @@ from hydra.data.indicators import (
     bar_body_ratio, close_range_position, bar_momentum, upper_wick_ratio,
 )
 from hydra.envs.market_simulator import MarketSimulator
+from hydra.envs.reward import DifferentialSharpeReward
 from hydra.envs.session_manager import SessionManager
 from hydra.envs.state_builder import StateBuilder
+from hydra.evaluation.fitness import AgentFitness, compute_fitness
 from hydra.risk.env_constraints import EnvConstraints
 from hydra.utils.numpy_opts import (
     extract_ohlcv_arrays,
@@ -197,13 +199,13 @@ class TestStateBuilder:
 
 class TestEnvConstraints:
     def test_clip_actions(self):
-        c = EnvConstraints(max_position_pct=0.10)
+        c = EnvConstraints(max_position_pct=0.20)
         c.reset(100_000.0)
         actions = np.array([0.5, 0.5], dtype=np.float32)
         holdings = np.zeros(2, dtype=np.float32)
         prices = np.array([100.0, 100.0], dtype=np.float32)
         clipped = c.clip_actions(actions, holdings, prices, 100_000.0)
-        assert np.all(clipped <= 0.10)
+        assert np.all(clipped <= 0.20)
 
     def test_drawdown_halt(self):
         c = EnvConstraints(max_drawdown_pct=0.05)
@@ -212,6 +214,67 @@ class TestEnvConstraints:
         truncate, halted, info = c.check_constraints(94.0, -0.06)
         assert truncate is True
         assert halted is True
+
+
+class TestIdleCashPenalty:
+    def test_idle_cash_penalty_triggers_above_threshold(self):
+        """Verify holding_penalty triggers when cash_ratio > 0.8."""
+        reward_fn = DifferentialSharpeReward(
+            holding_penalty=0.1,
+            transaction_penalty=0.0,
+            drawdown_penalty=0.0,
+        )
+        reward_fn.reset(100_000.0)
+
+        # Agent holds no stocks — 100% cash, cash_ratio = 1.0
+        holdings = np.zeros(3, dtype=np.float32)
+        prices = np.array([100.0, 50.0, 200.0], dtype=np.float32)
+
+        _, info = reward_fn.compute(100_000.0, 0.0, holdings, prices)
+        assert info["holding_penalty"] < 0, "Expected negative penalty for idle cash"
+
+    def test_idle_cash_penalty_inactive_below_threshold(self):
+        """No idle cash penalty when cash_ratio <= 0.8."""
+        reward_fn = DifferentialSharpeReward(
+            holding_penalty=0.1,
+            transaction_penalty=0.0,
+            drawdown_penalty=0.0,
+        )
+        initial_cash = 100_000.0
+        reward_fn.reset(initial_cash)
+
+        # Agent holds ~50% in stocks (well below 80% cash threshold)
+        holdings = np.array([200.0, 400.0, 50.0], dtype=np.float32)
+        prices = np.array([100.0, 50.0, 200.0], dtype=np.float32)
+        # position_value = 200*100 + 400*50 + 50*200 = 20000 + 20000 + 10000 = 50000
+        # cash_ratio = (100000 - 50000) / 100000 = 0.5
+
+        _, info = reward_fn.compute(initial_cash, 0.0, holdings, prices)
+        # No concentration penalty either (max_weight = 20000/100000 = 0.2 > 0.15)
+        # But idle cash penalty should NOT trigger since cash_ratio = 0.5 < 0.8
+        # The holding_penalty includes concentration penalty for max_weight > 0.15
+        # We just verify it's not worse than the concentration component alone
+        concentration_penalty = -0.1 * (0.2 - 0.15)
+        assert info["holding_penalty"] == pytest.approx(concentration_penalty, abs=1e-4)
+
+
+class TestZeroTradeFitness:
+    def test_zero_trade_negative_fitness(self):
+        """Zero-trade agents must get -0.1 fitness (below any trading agent)."""
+        metrics = AgentFitness(agent_name="idle_agent", total_trades=0)
+        score, breakdown = compute_fitness(metrics)
+        assert score == pytest.approx(-0.1)
+
+    def test_nonzero_trade_beats_zero_trade(self):
+        """Any agent that traded should score higher than a zero-trade agent."""
+        zero_metrics = AgentFitness(agent_name="idle", total_trades=0)
+        trading_metrics = AgentFitness(
+            agent_name="trader", total_trades=5,
+            sharpe=0.1, max_drawdown=-0.02, profit_factor=1.05,
+        )
+        zero_score, _ = compute_fitness(zero_metrics)
+        trade_score, _ = compute_fitness(trading_metrics)
+        assert trade_score > zero_score
 
 
 class TestNumpyOpts:

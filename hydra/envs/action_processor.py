@@ -25,7 +25,7 @@ class ActionProcessor:
         num_stocks: int,
         constraints: EnvConstraints,
         dead_zone: float = 0.0,
-        min_action: float = 0.02,
+        min_action: float = 0.001,
     ):
         self.num_stocks = num_stocks
         self.constraints = constraints

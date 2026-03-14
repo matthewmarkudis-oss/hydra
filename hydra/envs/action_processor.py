@@ -25,10 +25,12 @@ class ActionProcessor:
         num_stocks: int,
         constraints: EnvConstraints,
         dead_zone: float = 0.0,
+        min_action: float = 0.02,
     ):
         self.num_stocks = num_stocks
         self.constraints = constraints
         self.dead_zone = np.float32(dead_zone)
+        self.min_action = np.float32(min_action)
 
     def process(
         self,
@@ -63,6 +65,12 @@ class ActionProcessor:
         if np.any(neg_mask):
             actions[neg_mask] = (actions[neg_mask] + self.dead_zone) / (1.0 - self.dead_zone)
 
+        # Bump weak-but-nonzero actions up to minimum magnitude
+        if self.min_action > 0:
+            weak = (np.abs(actions) > 0) & (np.abs(actions) < self.min_action)
+            if np.any(weak):
+                actions[weak] = np.sign(actions[weak]) * self.min_action
+
         # Apply risk constraints (position size limits)
         actions = self.constraints.clip_actions(actions, holdings, prices, portfolio_value)
 
@@ -75,4 +83,5 @@ class ActionProcessor:
             "low": -1.0,
             "high": 1.0,
             "dead_zone": float(self.dead_zone),
+            "min_action": float(self.min_action),
         }

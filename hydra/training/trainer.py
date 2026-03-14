@@ -92,11 +92,14 @@ class Trainer:
             if self._episode_count % self.checkpoint_interval == 0:
                 self._save_checkpoint()
 
+        total_trades = sum(s.get("num_trades", 0) for s in episode_summaries)
+
         return {
             "episodes": num_episodes,
             "mean_reward": float(np.mean(episode_rewards)),
             "std_reward": float(np.std(episode_rewards)),
             "total_steps": self._global_step,
+            "total_trades": total_trades,
         }
 
     def _train_one_episode(self, deterministic: bool = False) -> tuple[float, dict]:

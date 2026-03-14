@@ -34,11 +34,14 @@ class MultiAgentEnv:
         self,
         env: TradingEnv,
         pool: AgentPool,
+        exploration_noise: float = 0.1,
     ):
         self.env = env
         self.pool = pool
+        self.exploration_noise = np.float32(exploration_noise)
         self._last_obs: np.ndarray | None = None
         self._episode_count = 0
+        self._rng = np.random.default_rng()
 
     @property
     def observation_space(self) -> gym.spaces.Box:
@@ -69,6 +72,7 @@ class MultiAgentEnv:
     def step(
         self,
         external_actions: dict[str, np.ndarray] | None = None,
+        deterministic: bool = False,
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """Execute one multi-agent step.
 
@@ -78,6 +82,7 @@ class MultiAgentEnv:
         Args:
             external_actions: Optional pre-computed actions per agent.
                 If None, agents select actions from the current observation.
+            deterministic: If True, disable exploration noise in aggregation.
 
         Returns:
             Tuple of (observation, shared_reward, terminated, truncated, info).
@@ -92,7 +97,7 @@ class MultiAgentEnv:
             per_agent_actions = self.pool.collect_actions(obs)
 
         # Aggregate actions
-        aggregated = self._aggregate_actions(per_agent_actions)
+        aggregated = self._aggregate_actions(per_agent_actions, deterministic=deterministic)
 
         # Step the underlying environment
         next_obs, reward, terminated, truncated, info = self.env.step(aggregated)
@@ -111,35 +116,47 @@ class MultiAgentEnv:
 
         return next_obs, reward, terminated, truncated, info
 
-    def _aggregate_actions(self, per_agent_actions: dict[str, np.ndarray]) -> np.ndarray:
+    def _aggregate_actions(
+        self,
+        per_agent_actions: dict[str, np.ndarray],
+        deterministic: bool = False,
+    ) -> np.ndarray:
         """Aggregate per-agent actions into a single action via weighted mean.
 
-        Includes magnitude-preserving rescaling: averaging across many agents
-        dilutes action magnitude. We rescale the aggregated action toward the
-        maximum individual agent signal (capped at 3x to prevent noise amplification).
+        Includes magnitude-preserving rescaling with a dynamic cap based on
+        pool size, and exploration noise during training to ensure non-zero
+        actions even when untrained networks output near-zero values.
         """
         if not per_agent_actions:
             return np.zeros(self.env.action_space.shape, dtype=np.float32)
 
         names = list(per_agent_actions.keys())
         weights = self.pool.get_weights()
+        n_agents = len(names)
 
         action_matrix = np.stack([per_agent_actions[n] for n in names])
         aggregated = np.average(action_matrix, axis=0, weights=weights)
 
-        # Magnitude-preserving rescaling
+        # Magnitude-preserving rescaling — cap scales with pool size
         max_abs_per_stock = np.max(np.abs(action_matrix), axis=0)
         agg_abs = np.abs(aggregated)
-        # Only rescale where at least one agent has meaningful signal
+        max_scale = np.float32(max(n_agents, 3))
         meaningful = max_abs_per_stock > 0.01
         if np.any(meaningful):
             scale = np.ones_like(aggregated)
             safe_agg = np.where(agg_abs > 1e-8, agg_abs, np.float32(1.0))
             scale[meaningful] = np.minimum(
                 max_abs_per_stock[meaningful] / safe_agg[meaningful],
-                np.float32(3.0),
+                max_scale,
             )
             aggregated = aggregated * scale
+
+        # Exploration noise during training — ensures non-zero actions
+        if not deterministic and self.exploration_noise > 0:
+            noise = self._rng.normal(
+                0, float(self.exploration_noise), size=aggregated.shape,
+            ).astype(np.float32)
+            aggregated = aggregated + noise
 
         return np.clip(aggregated, -1.0, 1.0).astype(np.float32)
 
@@ -207,7 +224,9 @@ class MultiAgentEnv:
         step_count = 0
 
         while True:
-            next_obs, reward, terminated, truncated, step_info = self.step()
+            next_obs, reward, terminated, truncated, step_info = self.step(
+                deterministic=deterministic,
+            )
             total_reward += reward
             step_count += 1
 

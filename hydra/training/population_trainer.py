@@ -23,15 +23,16 @@ from hydra.envs.trading_env import TradingEnv
 from hydra.evaluation.competition import AgentCompetitionScore, CompetitionRebalancer
 from hydra.evaluation.conviction import ConvictionCalibrator
 from hydra.evolution.diagnostics import DiagnosticEngine, GenerationMetrics
-from hydra.evolution.mutation_engine import MutationEngine, generate_random_variant
 from hydra.training.curriculum import Curriculum
 from hydra.training.metrics_tracker import MetricsTracker
 from hydra.training.trainer import Trainer
 
 logger = logging.getLogger("hydra.training.population")
 
-# Timesteps of SB3 gradient training per learning agent per generation
-_DEFAULT_TRAIN_TIMESTEPS = 500
+# Timesteps of SB3 gradient training per learning agent per generation.
+# Must be >= PPO n_steps * 2 (4096 ≥ 2048 * 2) to ensure at least two
+# full rollout buffer fills and meaningful gradient updates per generation.
+_DEFAULT_TRAIN_TIMESTEPS = 4096
 
 
 class PopulationTrainer:
@@ -60,12 +61,14 @@ class PopulationTrainer:
         eval_episodes: int = 10,
         num_generations: int = 10,
         top_k_promote: int = 2,
-        bottom_k_demote: int = 1,
+        bottom_k_demote: int = 3,
+        max_pool_size: int = 20,
         checkpoint_dir: str = "checkpoints",
         train_timesteps: int = _DEFAULT_TRAIN_TIMESTEPS,
         enable_diagnostics: bool = True,
         enable_competition: bool = True,
         enable_conviction: bool = True,
+        start_generation: int = 0,
     ):
         self.env = env
         self.pool = pool
@@ -76,23 +79,19 @@ class PopulationTrainer:
         self.num_generations = num_generations
         self.top_k_promote = top_k_promote
         self.bottom_k_demote = bottom_k_demote
+        self.max_pool_size = max_pool_size
         self.checkpoint_dir = checkpoint_dir
         self.train_timesteps = train_timesteps
+        self.on_generation: Any = None  # Optional callback(gen_idx, gen_result)
+        self.on_intervention: Any = None  # Optional callback(gen_idx, gen_results) -> intervention dict
 
-        self._generation = 0
+        self._generation = start_generation
+        self._start_generation = start_generation
+        self._agent_envs: dict[str, TradingEnv] = {}  # Persistent per-agent envs
 
-        # CHIMERA diagnostics + mutation engine
+        # CHIMERA diagnostics (monitoring + weak agent detection)
         self.enable_diagnostics = enable_diagnostics
         self._diagnostics = DiagnosticEngine() if enable_diagnostics else None
-        self._overlay: dict = {
-            "agent_weights": {},
-            "agent_params": {},
-            "risk": {},
-            "reward": {},
-            "benched_agents": [],
-            "fitness_weights": {},
-        }
-        self._mutations_applied: list = []
 
         # PROMETHEUS competition rebalancer
         self.enable_competition = enable_competition
@@ -106,7 +105,10 @@ class PopulationTrainer:
         """Run full population-based training with CHIMERA/PROMETHEUS/ELEOS integration."""
         generation_results = []
 
-        for gen in range(self.num_generations):
+        if self._start_generation > 0:
+            logger.info(f"Resuming from generation {self._start_generation}")
+
+        for gen in range(self._start_generation, self.num_generations):
             self._generation = gen + 1
             logger.info(f"=== Generation {self._generation}/{self.num_generations} ===")
             logger.info(f"Pool: {self.pool.size} agents ({len(self.pool.get_learning_agents())} learning)")
@@ -134,19 +136,23 @@ class PopulationTrainer:
             for agent_name, score in eval_scores.items():
                 self.metrics.log_agent_eval(self._generation, agent_name, score)
 
-            # --- CHIMERA: Diagnostics + Mutations ---
+            # --- CHIMERA: Diagnostics + Circuit Breakers ---
             diagnosis = None
             if self._diagnostics:
                 diagnosis = self._run_diagnostics(train_result, eval_scores)
 
+            # --- ELEOS: Bayesian conviction calibration (runs BEFORE PROMETHEUS) ---
+            # Trust gating: new/unproven agents start at 50% allocation.
+            # Running before PROMETHEUS ensures conviction-adjusted weights are
+            # the input to competition rebalancing, not overwritten by it.
+            if self._conviction:
+                self._update_conviction(eval_scores)
+
             # --- PROMETHEUS: Competition-based weight rebalancing ---
+            # Now operates on conviction-gated weights with EMA smoothing.
             competition_result = None
             if self._competition:
                 competition_result = self._run_competition(eval_scores)
-
-            # --- ELEOS: Bayesian conviction calibration ---
-            if self._conviction:
-                self._update_conviction(eval_scores)
 
             # 4. Update rankings
             self.pool.update_rankings(eval_scores)
@@ -157,8 +163,27 @@ class PopulationTrainer:
             # 6. Demote bottom static agents (keep pool size manageable)
             demoted = self.pool.demote_bottom(self.bottom_k_demote)
 
+            # 6b. Enforce max pool size cap — demote excess bottom agents
+            if self.pool.size > self.max_pool_size:
+                excess = self.pool.size - self.max_pool_size
+                additional = self.pool.demote_bottom(excess)
+                demoted.extend(additional)
+                logger.info(
+                    f"Pool cap enforcement: demoted {len(additional)} extra "
+                    f"agents to reach max_pool_size={self.max_pool_size}"
+                )
+
             # 7. Apply curriculum
-            self.curriculum.on_generation(self._generation, eval_scores)
+            adjustments = self.curriculum.on_generation(self._generation, eval_scores)
+
+            # Apply regime-conditional rewards if regime changed
+            regime = adjustments.get("regime")
+            if regime and hasattr(self.env, "reward_fn"):
+                try:
+                    self.env.reward_fn.set_regime(regime)
+                    logger.info(f"  Reward regime set to: {regime}")
+                except Exception as e:
+                    logger.debug(f"  Could not set reward regime: {e}")
 
             gen_result = {
                 "generation": self._generation,
@@ -175,6 +200,10 @@ class PopulationTrainer:
                     "severity": diagnosis["severity"],
                     "primary_issue": diagnosis["primary_issue"],
                     "num_mutations": len(diagnosis["recommended_mutations"]),
+                    "circuit_breaker_actions": [
+                        {"action": cb.action, "target": cb.target_agent, "reduction_pct": cb.reduction_pct}
+                        for cb in diagnosis.get("circuit_breaker_actions", [])
+                    ],
                 }
             if competition_result:
                 gen_result["competition"] = {
@@ -197,6 +226,57 @@ class PopulationTrainer:
                 f"pool_size={self.pool.size}"
             )
 
+            # Fire generation callback (used for live dashboard updates)
+            if self.on_generation:
+                try:
+                    self.on_generation(self._generation, generation_results)
+                except Exception as e:
+                    logger.warning(f"Generation callback failed: {e}")
+
+            # Fire intervention hook (Operations Monitor + Regime + Risk Manager)
+            if self.on_intervention:
+                try:
+                    intervention = self.on_intervention(
+                        self._generation, generation_results
+                    )
+                    if intervention:
+                        # Config patches from Operations Monitor
+                        if intervention.get("type") == "config_patch":
+                            patches = intervention.get("patches", {})
+                            if "max_pool_size" in patches:
+                                self.max_pool_size = patches["max_pool_size"]
+                            if "bottom_k_demote" in patches:
+                                self.bottom_k_demote = patches["bottom_k_demote"]
+                            logger.info(
+                                f"Intervention applied at gen {self._generation}: "
+                                f"{list(patches.keys())}"
+                            )
+
+                        # Regime injection from Geopolitics Expert via corp state
+                        int_regime = intervention.get("regime")
+                        if int_regime:
+                            self.curriculum.set_regime(int_regime)
+                            if hasattr(self.env, "reward_fn"):
+                                try:
+                                    self.env.reward_fn.set_regime(int_regime)
+                                    logger.info(f"  Reward regime set to: {int_regime} (from corp state)")
+                                except Exception as e:
+                                    logger.debug(f"  Could not set reward regime: {e}")
+
+                        # Weight overrides from Risk Manager (circuit breaker enforcement)
+                        weight_overrides = intervention.get("weight_overrides")
+                        if weight_overrides:
+                            for agent_name, new_weight in weight_overrides.items():
+                                try:
+                                    self.pool.set_weight(agent_name, new_weight)
+                                    logger.info(
+                                        f"  RISK MANAGER: {agent_name} weight → {new_weight:.4f}"
+                                    )
+                                except Exception:
+                                    pass
+                except Exception as e:
+                    logger.warning(f"Intervention hook failed: {e}")
+
         return {
             "total_generations": self.num_generations,
             "generations": generation_results,
@@ -204,34 +284,107 @@ class PopulationTrainer:
         }
 
     def _train_agents_on_env(self) -> None:
-        """Run SB3 gradient-based training for each learning agent.
+        """Run SB3 gradient-based training for learning agents.
 
-        This is where actual neural network weight updates happen.
-        Each learning agent runs train_on_env() which calls SB3's learn()
-        method, performing real policy gradient descent.
+        Each learning agent gets a persistent env copy (created once, reused
+        across generations) to avoid state contention AND preserve SB3
+        internal state (SAC replay buffer, PPO rollout buffer).
+
+        Uses ThreadPoolExecutor for parallelism on CPU.  When a GPU device
+        (DirectML / CUDA) is detected, workers are serialized (max_workers=1)
+        because DirectML crashes on concurrent GPU access from threads.
         """
-        for agent in self.pool.get_learning_agents():
-            if not hasattr(agent, "train_on_env"):
-                continue
-            try:
-                result = agent.train_on_env(self.env, total_timesteps=self.train_timesteps)
-                logger.info(
-                    f"  SB3 training '{agent.name}': "
-                    f"{self.train_timesteps} timesteps, "
-                    f"total={result.get('total_timesteps', 0):.0f}"
-                )
-            except Exception as e:
-                logger.warning(f"  SB3 training '{agent.name}' failed: {e}")
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        learning_agents = [
+            a for a in self.pool.get_learning_agents()
+            if hasattr(a, "train_on_env")
+        ]
+        if not learning_agents:
+            return
+
+        # Detect GPU usage — DirectML and CUDA can't safely share a single
+        # device across threads, so serialize training in that case.
+        uses_gpu = any(
+            getattr(a, "_device", "cpu") in ("dml", "cuda")
+            for a in learning_agents
+        )
+        max_workers = 1 if uses_gpu else len(learning_agents)
+        mode = "sequential (GPU)" if uses_gpu else f"parallel ({len(learning_agents)} workers)"
+        logger.info(f"  SB3 training mode: {mode}")
+
+        def train_one(agent):
+            env = self._get_agent_env(agent.name)
+            result = agent.train_on_env(env, total_timesteps=self.train_timesteps)
+            return agent.name, result
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(train_one, agent): agent
+                for agent in learning_agents
+            }
+            for future in as_completed(futures):
+                agent = futures[future]
+                try:
+                    name, result = future.result()
+                    logger.info(
+                        f"  SB3 training '{name}': "
+                        f"{self.train_timesteps} timesteps, "
+                        f"total={result.get('total_timesteps', 0):.0f}"
+                    )
+                except Exception as e:
+                    logger.warning(f"  SB3 training '{agent.name}' failed: {e}")
+
+    def _get_agent_env(self, agent_name: str):
+        """Get or create a persistent vectorized env for a specific agent.
+
+        Creates a DummyVecEnv with n_envs copies of TradingEnv for batched
+        SB3 training.  Envs are created once and reused across generations
+        so that SB3's set_env() identity check works correctly — preserving
+        SAC's replay buffer and PPO's rollout state between generations.
+        """
+        if agent_name not in self._agent_envs:
+            from stable_baselines3.common.vec_env import DummyVecEnv
+
+            kwargs = self.env.get_init_kwargs()
+            n_envs = 4
+
+            def _make_env(seed_offset, kw=kwargs):
+                def _init():
+                    return TradingEnv(seed=seed_offset, **kw)
+                return _init
+
+            self._agent_envs[agent_name] = DummyVecEnv(
+                [_make_env(i) for i in range(n_envs)]
+            )
+        return self._agent_envs[agent_name]
 
     def _evaluate_agents(self) -> dict[str, float]:
-        """Evaluate each agent by running episodes with only that agent active."""
+        """Evaluate each agent by running episodes with only that agent active.
+
+        Each eval episode is seeded so that:
+        - Each agent gets a reproducible but unique set of market windows
+        - Different generations evaluate on different windows (prevents overfitting)
+        - Per-agent seed offsets ensure even near-identical policies produce
+          different scores (they face different market conditions)
+
+        The per-agent offset uses hash(agent.name) % 10000 so results are
+        deterministic and reproducible, but each agent sees different data.
+        With eval_episodes=10, the mean across diverse windows provides a
+        robust ranking even when policies are similar.
+        """
         scores: dict[str, float] = {}
+        # Base seed changes per generation so eval windows rotate
+        gen_seed = 42 + self._generation * 1000
 
         for agent in self.pool.get_all():
             episode_rewards = []
+            # Per-agent offset ensures different agents see different windows,
+            # revealing policy differences that identical seeds would hide.
+            agent_offset = hash(agent.name) % 10000
 
-            for _ in range(self.eval_episodes):
-                obs, info = self.env.reset()
+            for ep in range(self.eval_episodes):
+                obs, info = self.env.reset(seed=gen_seed + ep * 100 + agent_offset)
                 total_reward = 0.0
 
                 while True:
@@ -254,7 +407,11 @@ class PopulationTrainer:
     def _run_diagnostics(
         self, train_result: dict, eval_scores: dict[str, float]
     ) -> dict | None:
-        """Run CHIMERA diagnostic engine and apply recommended mutations."""
+        """Run CHIMERA diagnostic engine — monitoring + weak agent detection.
+
+        Logs issues and severity. Also generates circuit breaker actions
+        for use in forward-test / paper trading mode.
+        """
         try:
             gen_metrics = GenerationMetrics(
                 generation=self._generation,
@@ -271,20 +428,19 @@ class PopulationTrainer:
                 logger.info(
                     f"  CHIMERA [{diagnosis['severity']}]: {diagnosis['primary_issue']}"
                 )
-                # Apply recommended mutations to overlay
-                mutations = diagnosis["recommended_mutations"]
-                if mutations:
-                    engine = MutationEngine(self._overlay)
-                    self._overlay = engine.apply_mutations(mutations)
-                    self._mutations_applied.extend(mutations)
-                    logger.info(f"  Applied {len(mutations)} mutations")
+                for mut in diagnosis["recommended_mutations"]:
+                    logger.info(f"  Recommended [{mut.category}] {mut.mutation_type}: {mut.description}")
 
-                    # If competition rebalancer exists, apply weight mutations
-                    new_weights = self._overlay.get("agent_weights", {})
-                    if new_weights:
-                        for agent_name, weight in new_weights.items():
-                            if weight > 0:
-                                self.pool.set_weight(agent_name, weight)
+                # Circuit breaker actions — logged for backtesting,
+                # acted upon in forward-test/paper mode by the caller.
+                cb_actions = self._diagnostics.get_circuit_breaker_actions(diagnosis)
+                diagnosis["circuit_breaker_actions"] = cb_actions
+                for cb in cb_actions:
+                    target = cb.target_agent or "portfolio"
+                    logger.info(
+                        f"  CIRCUIT BREAKER: {cb.action} → {target} "
+                        f"(reduction={cb.reduction_pct:.0%})"
+                    )
 
             return diagnosis
         except Exception as e:

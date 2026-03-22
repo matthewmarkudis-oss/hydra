@@ -145,6 +145,11 @@ class AgentPool:
         for name, score in ranked:
             if name in learning and len(promoted) < k:
                 agent = self._agents[name]
+                # Log source agent weight checksum before snapshot
+                src_model = getattr(agent, '_model', None)
+                if src_model is not None:
+                    from hydra.agents.static_agent import _log_weight_checksum
+                    _log_weight_checksum(f"{name} (live)", src_model)
                 static = StaticAgent.from_agent(agent, name=f"{name}_gen{agent.episode_count}")
                 self.add(static)
                 promoted.append(static.name)
@@ -191,13 +196,18 @@ class AgentPool:
             except Exception as e:
                 logger.warning(f"Failed to save agent '{name}': {e}")
 
-            metadata["agents"][name] = {
+            agent_meta = {
                 "type": agent.__class__.__name__,
                 "obs_dim": agent.obs_dim,
                 "action_dim": agent.action_dim,
                 "frozen": agent.is_frozen,
                 "total_steps": agent.total_steps,
             }
+            # Persist source_type for StaticAgent so SAC snapshots
+            # reload with the correct SB3 model class.
+            if hasattr(agent, "_source_type"):
+                agent_meta["source_type"] = agent._source_type
+            metadata["agents"][name] = agent_meta
 
         save_json(metadata, directory / "pool_metadata.json")
         logger.info(f"Saved agent pool ({self.size} agents) to {directory}")
@@ -217,9 +227,12 @@ class AgentPool:
             agent_type = info["type"]
             obs_dim = info["obs_dim"]
             action_dim = info["action_dim"]
+            extra = {}
+            if "source_type" in info:
+                extra["source_type"] = info["source_type"]
 
             try:
-                agent = self._create_agent(agent_type, name, obs_dim, action_dim)
+                agent = self._create_agent(agent_type, name, obs_dim, action_dim, **extra)
                 agent.load(agent_dir / "model")
                 if info.get("frozen", False):
                     agent.freeze()
@@ -230,17 +243,31 @@ class AgentPool:
         logger.info(f"Loaded agent pool ({self.size} agents) from {directory}")
 
     @staticmethod
-    def _create_agent(agent_type: str, name: str, obs_dim: int, action_dim: int) -> BaseRLAgent:
-        """Factory method to create agent by type name."""
+    def _create_agent(
+        agent_type: str,
+        name: str,
+        obs_dim: int,
+        action_dim: int,
+        **kwargs,
+    ) -> BaseRLAgent:
+        """Factory method to create agent by type name.
+
+        Extra kwargs (e.g. source_type for StaticAgent) are forwarded
+        to the constructor when the class accepts them.
+        """
         from hydra.agents.ppo_agent import PPOAgent
         from hydra.agents.sac_agent import SACAgent
         from hydra.agents.a2c_agent import A2CAgent
+        from hydra.agents.td3_agent import TD3Agent
+        from hydra.agents.recurrent_ppo_agent import RecurrentPPOAgent
         from hydra.agents.rule_based_agent import RuleBasedAgent
 
         type_map = {
             "PPOAgent": PPOAgent,
             "SACAgent": SACAgent,
             "A2CAgent": A2CAgent,
+            "TD3Agent": TD3Agent,
+            "RecurrentPPOAgent": RecurrentPPOAgent,
             "StaticAgent": StaticAgent,
             "RuleBasedAgent": RuleBasedAgent,
         }
@@ -249,7 +276,12 @@ class AgentPool:
         if cls is None:
             raise ValueError(f"Unknown agent type: {agent_type}")
 
-        return cls(name=name, obs_dim=obs_dim, action_dim=action_dim)
+        # Only pass kwargs the constructor accepts (e.g. source_type for StaticAgent)
+        import inspect
+        sig = inspect.signature(cls.__init__)
+        valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+
+        return cls(name=name, obs_dim=obs_dim, action_dim=action_dim, **valid_kwargs)
 
     def get_summary(self) -> dict[str, Any]:
         """Get pool summary for logging."""

@@ -104,6 +104,7 @@ class PPOAgent(BaseRLAgent):
         ent_coef: float = 0.01,
         vf_coef: float = 0.5,
         max_grad_norm: float = 0.5,
+        net_arch: list[int] | None = None,
         prefer_gpu: bool = True,
     ):
         super().__init__(name, obs_dim, action_dim)
@@ -117,6 +118,7 @@ class PPOAgent(BaseRLAgent):
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
         self.max_grad_norm = max_grad_norm
+        self.net_arch = net_arch or [256, 256]
 
         self._device = _get_device(prefer_gpu)
         self._model = None
@@ -144,6 +146,8 @@ class PPOAgent(BaseRLAgent):
 
             dummy_env = _make_dummy_env(obs_space, action_space)
 
+            policy_kwargs = {"net_arch": self.net_arch}
+
             self._model = PPO(
                 "MlpPolicy",
                 env=dummy_env,
@@ -157,6 +161,7 @@ class PPOAgent(BaseRLAgent):
                 ent_coef=self.ent_coef,
                 vf_coef=self.vf_coef,
                 max_grad_norm=self.max_grad_norm,
+                policy_kwargs=policy_kwargs,
                 device=device,
                 verbose=0,
             )
@@ -224,13 +229,33 @@ class PPOAgent(BaseRLAgent):
         return metrics
 
     def train_on_env(self, env, total_timesteps: int) -> dict[str, float]:
-        """Train directly on a gymnasium environment using SB3's learn()."""
+        """Train directly on a gymnasium environment using SB3's learn().
+
+        Only calls set_env() when the env reference actually changed, to
+        avoid resetting PPO's internal rollout buffer state unnecessarily.
+        When switching from n_envs=1 (dummy) to n_envs=4 (VecEnv), uses
+        save/load to resize internal buffers (set_env rejects n_envs changes).
+        """
         self._ensure_model()
 
         if self._frozen:
             return {"skipped": 1.0}
 
-        self._model.set_env(env)
+        # Only set_env if env changed (preserves internal SB3 state)
+        if self._model.get_env() is not env:
+            current_n = getattr(self._model.get_env(), "num_envs", 1)
+            new_n = getattr(env, "num_envs", 1)
+            if current_n != new_n:
+                # n_envs changed — must save/reload to resize buffers
+                import tempfile, os
+                from stable_baselines3 import PPO
+                with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
+                    tmp_path = f.name
+                self._model.save(tmp_path)
+                self._model = PPO.load(tmp_path, env=env, device=self._model.device)
+                os.unlink(tmp_path)
+            else:
+                self._model.set_env(env)
         self._model.learn(total_timesteps=total_timesteps, reset_num_timesteps=False)
         self._total_steps += total_timesteps
 

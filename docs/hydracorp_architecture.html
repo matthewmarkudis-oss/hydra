@@ -1,0 +1,1389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HydraCorp Architecture</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #1c2333;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --orange: #d29922;
+    --purple: #bc8cff;
+    --cyan: #39d2c0;
+    --gold: #e3b341;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 0;
+  }
+  .hero {
+    background: linear-gradient(135deg, #0d1117 0%, #1a1e2e 50%, #0d1117 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 80px 40px 60px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(88,166,255,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero h1 {
+    font-size: 3.2em;
+    font-weight: 800;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, #58a6ff, #bc8cff, #39d2c0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 16px;
+  }
+  .hero .subtitle {
+    font-size: 1.3em;
+    color: var(--text-muted);
+    max-width: 700px;
+    margin: 0 auto 30px;
+  }
+  .hero .stats {
+    display: flex;
+    gap: 40px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .hero .stat {
+    text-align: center;
+  }
+  .hero .stat-value {
+    font-size: 2em;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .hero .stat-label {
+    font-size: 0.85em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+  h2 {
+    font-size: 2em;
+    font-weight: 700;
+    margin: 60px 0 24px;
+    color: #fff;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--border);
+  }
+  h2:first-child { margin-top: 0; }
+  h3 {
+    font-size: 1.4em;
+    font-weight: 600;
+    color: #fff;
+    margin: 32px 0 12px;
+  }
+  p { margin-bottom: 16px; color: var(--text); }
+  .section-intro {
+    font-size: 1.1em;
+    color: var(--text-muted);
+    margin-bottom: 32px;
+    max-width: 800px;
+  }
+
+  /* Org Chart */
+  .org-chart {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 40px 24px;
+    margin: 32px 0;
+    overflow-x: auto;
+  }
+  .org-chart pre {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 0.85em;
+    line-height: 1.5;
+    color: var(--text-muted);
+    text-align: center;
+    white-space: pre;
+  }
+  .org-chart pre .ceo { color: var(--gold); font-weight: bold; }
+  .org-chart pre .div { color: var(--accent); font-weight: bold; }
+  .org-chart pre .agent { color: var(--cyan); }
+  .org-chart pre .output { color: var(--purple); }
+  .org-chart pre .pipe { color: var(--green); font-weight: bold; }
+
+  /* Agent Cards */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 24px;
+    margin: 24px 0;
+  }
+  .agent-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    position: relative;
+    transition: border-color 0.2s;
+  }
+  .agent-card:hover { border-color: var(--accent); }
+  .agent-card .header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .agent-card .icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.6em;
+    flex-shrink: 0;
+  }
+  .agent-card .title-block h3 {
+    margin: 0 0 2px;
+    font-size: 1.3em;
+  }
+  .agent-card .title-block .role {
+    font-size: 0.85em;
+    color: var(--text-muted);
+  }
+  .agent-card .badges {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .badge {
+    font-size: 0.75em;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .badge-python { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+  .badge-llm { background: rgba(188,140,255,0.15); color: var(--purple); border: 1px solid rgba(188,140,255,0.3); }
+  .badge-free { background: rgba(57,210,192,0.15); color: var(--cyan); border: 1px solid rgba(57,210,192,0.3); }
+  .badge-schedule { background: rgba(210,153,34,0.15); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+  .badge-conditional { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+
+  .agent-card .description { margin-bottom: 16px; }
+  .agent-card .details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 700px) {
+    .agent-card .details { grid-template-columns: 1fr; }
+  }
+  .detail-block {
+    background: var(--bg3);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .detail-block h4 {
+    font-size: 0.8em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .detail-block ul {
+    list-style: none;
+    padding: 0;
+  }
+  .detail-block li {
+    font-size: 0.9em;
+    padding: 3px 0;
+    color: var(--text);
+  }
+  .detail-block li::before {
+    content: '\2022';
+    color: var(--accent);
+    margin-right: 8px;
+  }
+
+  /* Flow Diagram */
+  .flow {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px;
+    margin: 24px 0;
+  }
+  .flow-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+  .flow-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    padding: 20px 0;
+    position: relative;
+  }
+  .flow-step:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 23px;
+    top: 60px;
+    bottom: -20px;
+    width: 2px;
+    background: var(--border);
+  }
+  .flow-step .step-num {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--bg3);
+    border: 2px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1.1em;
+    color: var(--accent);
+    flex-shrink: 0;
+    z-index: 1;
+  }
+  .flow-step .step-content h4 {
+    font-size: 1.1em;
+    color: #fff;
+    margin-bottom: 6px;
+  }
+  .flow-step .step-content p {
+    font-size: 0.95em;
+    color: var(--text-muted);
+    margin: 0;
+  }
+  .flow-step .step-agents {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .agent-chip {
+    font-size: 0.8em;
+    padding: 4px 12px;
+    border-radius: 6px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--cyan);
+    font-weight: 500;
+  }
+
+  /* Layer Diagram */
+  .layers {
+    margin: 24px 0;
+  }
+  .layer {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: -1px;
+    position: relative;
+  }
+  .layer:first-child { border-radius: 12px 12px 0 0; }
+  .layer:last-child { border-radius: 0 0 12px 12px; }
+  .layer-ceo {
+    background: linear-gradient(135deg, rgba(227,179,65,0.1), rgba(227,179,65,0.02));
+    border-color: rgba(227,179,65,0.3);
+  }
+  .layer-corp {
+    background: linear-gradient(135deg, rgba(188,140,255,0.1), rgba(188,140,255,0.02));
+    border-color: rgba(188,140,255,0.3);
+  }
+  .layer-config {
+    background: linear-gradient(135deg, rgba(88,166,255,0.1), rgba(88,166,255,0.02));
+    border-color: rgba(88,166,255,0.3);
+  }
+  .layer-rl {
+    background: linear-gradient(135deg, rgba(63,185,80,0.1), rgba(63,185,80,0.02));
+    border-color: rgba(63,185,80,0.3);
+  }
+  .layer h3 { margin: 0 0 8px; }
+  .layer p { margin: 0; font-size: 0.95em; color: var(--text-muted); }
+  .layer .arrow {
+    text-align: center;
+    font-size: 1.5em;
+    color: var(--text-muted);
+    margin: 8px 0 -20px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Message Bus Table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.95em;
+  }
+  th {
+    background: var(--bg3);
+    text-align: left;
+    padding: 12px 16px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-size: 0.8em;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid var(--border);
+  }
+  td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:hover td { background: rgba(88,166,255,0.03); }
+  code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.88em;
+    background: var(--bg3);
+    padding: 2px 7px;
+    border-radius: 4px;
+    color: var(--accent);
+  }
+  .cost-table td:last-child {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--green);
+    text-align: right;
+  }
+  .priority-5 { color: var(--red); font-weight: 700; }
+  .priority-4 { color: var(--orange); font-weight: 600; }
+  .priority-3 { color: var(--accent); }
+  .priority-2 { color: var(--text-muted); }
+  .priority-1 { color: var(--text-muted); font-style: italic; }
+
+  /* State Schema */
+  .schema-block {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin: 16px 0;
+  }
+  .schema-block pre {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.85em;
+    line-height: 1.6;
+    color: var(--text);
+    overflow-x: auto;
+  }
+  .schema-block .key { color: var(--accent); }
+  .schema-block .type { color: var(--purple); }
+  .schema-block .comment { color: var(--text-muted); font-style: italic; }
+
+  /* Footer */
+  .footer {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+    font-size: 0.85em;
+    border-top: 1px solid var(--border);
+    margin-top: 60px;
+  }
+
+  /* Division headers */
+  .division-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 48px 0 20px;
+    padding: 16px 20px;
+    background: var(--bg2);
+    border-radius: 10px;
+    border-left: 4px solid;
+  }
+  .division-header.ops { border-left-color: var(--green); }
+  .division-header.strategy { border-left-color: var(--purple); }
+  .division-header.intel { border-left-color: var(--cyan); }
+  .division-header.support { border-left-color: var(--orange); }
+  .division-header h3 { margin: 0; font-size: 1.2em; }
+  .division-header p { margin: 0; font-size: 0.9em; color: var(--text-muted); }
+
+  /* Safety Principle Box */
+  .principle-box {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--red);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 24px 0;
+  }
+  .principle-box h4 {
+    color: var(--red);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    font-size: 0.85em;
+    letter-spacing: 1px;
+  }
+  .principle-box p { margin: 0; }
+</style>
+</head>
+<body>
+
+<!-- ============ HERO ============ -->
+<div class="hero">
+  <h1>HydraCorp</h1>
+  <p class="subtitle">
+    An AI-managed trading research corporation built on top of the Hydra multi-agent
+    reinforcement learning system. Eight specialized agents organized into three divisions,
+    coordinated by a central Chief of Staff.
+  </p>
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-value">8</div>
+      <div class="stat-label">Corp Agents</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">3</div>
+      <div class="stat-label">Divisions</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">35</div>
+      <div class="stat-label">RL Agents (Pool)</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">$2,500</div>
+      <div class="stat-label">Starting Capital (CAD)</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">~$0.09</div>
+      <div class="stat-label">Monthly LLM Cost</div>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ============ KEY PRINCIPLE ============ -->
+<div class="principle-box">
+  <h4>Core Design Principle</h4>
+  <p>
+    LLM agents <strong>never trade directly</strong>. They adjust the <code>HydraConfig</code>
+    parameters that control how RL agents are trained. The RL layer (PPO, SAC, RecurrentPPO, 9
+    rule-based agents) handles all actual trading decisions during backtesting. The corporation
+    layer provides strategic oversight, regression prevention, and external intelligence.
+  </p>
+</div>
+
+<!-- ============ ARCHITECTURE LAYERS ============ -->
+<h2>System Layers</h2>
+<p class="section-intro">
+  HydraCorp separates concerns into four layers. Information flows downward as config
+  changes and upward as performance metrics.
+</p>
+
+<div class="layers">
+  <div class="layer layer-ceo">
+    <h3 style="color: var(--gold);">CEO Layer (You)</h3>
+    <p>
+      The CEO Dashboard at <code>localhost:5050</code> shows portfolio value in CAD,
+      agent performance, risk gauges, alerts, and benchmark comparison. All dollar
+      amounts are scaled from the RL engine's internal $100K to your real $2,500 starting capital.
+      You approve or reject config proposals, promote shadow configs, and set strategic direction.
+    </p>
+  </div>
+  <div class="layer layer-corp">
+    <h3 style="color: var(--purple);">Corporation Layer (8 Agents)</h3>
+    <p>
+      The Chief of Staff orchestrates a 6-phase cycle: pre-flight validation, pipeline
+      execution, strategy analysis, intelligence gathering, shadow comparison, and CEO
+      briefing. Four agents use LLMs (with rule-based fallbacks); four are pure Python.
+      All communicate through typed messages and shared state persisted to JSON.
+    </p>
+  </div>
+  <div class="layer layer-config">
+    <h3 style="color: var(--accent);">Config Interface (HydraConfig YAML)</h3>
+    <p>
+      The only communication channel between corp and RL layers. Corp agents propose
+      patches to <code>RewardConfig</code>, <code>EnvConfig</code>, and <code>PoolConfig</code>
+      sections. Patches are validated by the Senior Dev before application. Config hashes
+      (SHA-256) track what's been tried and prevent regressions.
+    </p>
+  </div>
+  <div class="layer layer-rl">
+    <h3 style="color: var(--green);">RL Layer (Hydra Engine)</h3>
+    <p>
+      Population-based training across 30 generations. Three learning agents (PPO, SAC,
+      RecurrentPPO) evolve alongside static snapshots and rule-based agents. Five protocols
+      govern the pipeline: CHIMERA (diagnostics), PROMETHEUS (weight rebalancing),
+      ELEOS (conviction scoring), ATHENA (walk-forward validation), and KRONOS (curriculum scheduling).
+    </p>
+  </div>
+</div>
+
+<!-- ============ ORG CHART ============ -->
+<h2>Organization Chart</h2>
+
+<div class="org-chart"><pre>
+                         <span class="ceo">CEO (You)</span>
+                              |
+                     <span class="ceo">CEO Dashboard (:5050)</span>
+                              |
+                    <span class="div">Chief of Staff</span>
+                              |
+         +--------------------+--------------------+
+         |                    |                    |
+   <span class="div">Operations Div</span>       <span class="div">Strategy Div</span>        <span class="div">Intelligence Div</span>
+         |                    |                    |
+  +-----------+        +----------+         +----------+
+  |           |        |          |         |          |
+<span class="agent">Senior    Hardware</span>   <span class="agent">Hedge Fund  Contra-</span>  <span class="agent">Geopolitics Innovation</span>
+<span class="agent">  Dev     Optimizer</span>  <span class="agent">Director    rian</span>      <span class="agent">Expert     Scout</span>
+  |           |        |          |         |          |
+  +-----+-----+        +----+-----+         +----+-----+
+        |                    |                    |
+        v                    v                    v
+   <span class="output">[Config Gate]</span>      <span class="output">[Strategy Memos]</span>    <span class="output">[Regime Signals]</span>
+        |                    |                    |
+        +--------+-----------+--------------------+
+                 |
+                 v
+          <span class="pipe">Hydra RL Pipeline</span>
+   <span class="pipe">(PPO / SAC / RPPO / Rule Agents)</span>
+                 |
+          <span class="agent">Shadow Trader</span>
+       <span class="output">(A/B Comparison)</span>
+</pre></div>
+
+<!-- ============ EXECUTION FLOW ============ -->
+<h2>Execution Cycle</h2>
+<p class="section-intro">
+  Each corporation cycle runs these six phases in sequence. The graph executor
+  supports conditional routing &mdash; phases can be skipped based on pre-flight
+  results or pipeline errors.
+</p>
+
+<div class="flow">
+  <div class="flow-steps">
+    <div class="flow-step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <h4>Pre-Flight</h4>
+        <p>
+          Senior Dev validates the proposed config against the blacklist (SHA-256 hash lookup),
+          checks for recent duplicates, and reviews any pending patches for safety constraint
+          violations. Hardware Optimizer detects CPU/GPU config and recommends optimal
+          <code>n_envs</code> and <code>cpu_workers</code>. If the config is blacklisted, the
+          cycle terminates early.
+        </p>
+        <div class="step-agents">
+          <span class="agent-chip">Senior Dev</span>
+          <span class="agent-chip">Hardware Optimizer</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <h4>Pipeline Execution</h4>
+        <p>
+          Runs the full Hydra training pipeline: data preparation (real Alpaca bars or synthetic),
+          environment building, population-based training (30 generations, 100 episodes each),
+          evaluation (VectorBT cross-validation), and ATHENA walk-forward validation. Results
+          are recorded in corporation state.
+        </p>
+        <div class="step-agents">
+          <span class="agent-chip">PipelineOrchestrator</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <h4>Post-Analysis</h4>
+        <p>
+          Hedge Fund Director analyzes results and proposes config patches (e.g., reduce
+          transaction penalty, tighten drawdown limits). Contrarian fires if any agent
+          passed validation or returns are suspiciously high &mdash; challenges results
+          for hidden fragility and proposes stress-test configs.
+        </p>
+        <div class="step-agents">
+          <span class="agent-chip">Hedge Fund Director</span>
+          <span class="agent-chip">Contrarian</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <h4>Intelligence</h4>
+        <p>
+          Geopolitics Expert fetches headlines from NewsAPI, Finnhub, or Yahoo RSS and
+          classifies the market regime (risk_on / risk_off / crisis). Innovation Scout
+          searches for new tools and libraries relevant to the RL trading stack. Both
+          run on schedules (daily and weekly) unless forced.
+        </p>
+        <div class="step-agents">
+          <span class="agent-chip">Geopolitics Expert</span>
+          <span class="agent-chip">Innovation Scout</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">5</div>
+      <div class="step-content">
+        <h4>Shadow Comparison</h4>
+        <p>
+          If a shadow config has been set (from Hedge Fund Director or Contrarian proposals),
+          the Shadow Trader runs a parallel pipeline with the experimental config and compares
+          results against the primary. After 3 consecutive shadow wins, promotion is recommended.
+        </p>
+        <div class="step-agents">
+          <span class="agent-chip">Shadow Trader</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">6</div>
+      <div class="step-content">
+        <h4>CEO Briefing</h4>
+        <p>
+          Aggregates all phase outputs into a CEO-friendly summary: portfolio value (CAD),
+          total return, best agent, benchmark comparison, market regime, pending proposals,
+          and recent alerts. Displayed on the dashboard.
+        </p>
+        <div class="step-agents">
+          <span class="agent-chip">Chief of Staff</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ AGENT PROFILES ============ -->
+<h2>Agent Profiles</h2>
+
+<!-- Operations Division -->
+<div class="division-header ops">
+  <div>
+    <h3>Operations Division</h3>
+    <p>Pre-flight validation, hardware tuning, and config regression prevention. All pure Python &mdash; zero LLM cost.</p>
+  </div>
+</div>
+
+<div class="agent-grid">
+  <!-- Chief of Staff -->
+  <div class="agent-card">
+    <div class="header">
+      <div class="icon" style="background: rgba(227,179,65,0.15); color: var(--gold);">&#9733;</div>
+      <div class="title-block">
+        <h3>Chief of Staff</h3>
+        <div class="role">Central Coordinator &amp; Router</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge badge-python">Pure Python</span>
+      <span class="badge badge-free">$0 / run</span>
+    </div>
+    <div class="description">
+      <p>
+        The central nervous system of the corporation. Orchestrates the full 6-phase cycle,
+        routes events to the correct division, enforces run schedules, and aggregates reports
+        for the CEO dashboard. Wraps the <code>PipelineOrchestrator</code> with pre/post hooks.
+      </p>
+    </div>
+    <div class="details">
+      <div class="detail-block">
+        <h4>Key Responsibilities</h4>
+        <ul>
+          <li>Execute 4-phase corporation cycle</li>
+          <li>Register and route to all agents</li>
+          <li>Generate CEO briefing with portfolio metrics</li>
+          <li>Check shadow promotion logic</li>
+          <li>Record pipeline results to state</li>
+        </ul>
+      </div>
+      <div class="detail-block">
+        <h4>Decisions Logged</h4>
+        <ul>
+          <li><code>config_veto</code> &mdash; blocked by blacklist</li>
+          <li><code>pipeline_complete</code> &mdash; successful run</li>
+          <li><code>pipeline_failed</code> &mdash; error during run</li>
+          <li><code>shadow_promotion_recommended</code></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Senior Dev -->
+  <div class="agent-card">
+    <div class="header">
+      <div class="icon" style="background: rgba(63,185,80,0.15); color: var(--green);">&#128272;</div>
+      <div class="title-block">
+        <h3>Senior Dev</h3>
+        <div class="role">Config Regression Prevention</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge badge-python">Pure Python</span>
+      <span class="badge badge-free">$0 / run</span>
+    </div>
+    <div class="description">
+      <p>
+        The guardrail. Maintains a blacklist of failed config hashes (SHA-256) and validates
+        every proposed config before pipeline runs. Detects regressions by comparing fitness
+        against historical bests. Reviews patches from the Hedge Fund Director for
+        safety constraint violations.
+      </p>
+    </div>
+    <div class="details">
+      <div class="detail-block">
+        <h4>Safety Constraints Enforced</h4>
+        <ul>
+          <li><code>transaction_penalty &ge; 0.005</code></li>
+          <li><code>drawdown_penalty &ge; 0.1</code></li>
+          <li><code>reward_scale</code> between 10 and 500</li>
+          <li><code>max_position &le; 60%</code></li>
+          <li><code>max_drawdown &le; 40%</code></li>
+        </ul>
+      </div>
+      <div class="detail-block">
+        <h4>Regression Detection</h4>
+        <ul>
+          <li>Config hash lookup against blacklist</li>
+          <li>Duplicate detection (last 10 runs)</li>
+          <li>If return &lt; 50% of historical best: blacklist</li>
+          <li>Bulk init from <code>meta_optimize.jsonl</code></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hardware Optimizer -->
+  <div class="agent-card">
+    <div class="header">
+      <div class="icon" style="background: rgba(88,166,255,0.15); color: var(--accent);">&#9881;</div>
+      <div class="title-block">
+        <h3>Hardware Optimizer</h3>
+        <div class="role">CPU/GPU Configuration Tuning</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge badge-python">Pure Python</span>
+      <span class="badge badge-free">$0 / run</span>
+    </div>
+    <div class="description">
+      <p>
+        Detects CPU, GPU (DirectML), and RAM configuration. Recommends optimal
+        <code>n_envs</code> and <code>cpu_workers</code> based on available hardware.
+        Detects AMD Smart Access Memory (SAM/ReBAR) via Windows registry. Tracks
+        per-generation training times for trend analysis.
+      </p>
+    </div>
+    <div class="details">
+      <div class="detail-block">
+        <h4>Auto-Tuning Rules</h4>
+        <ul>
+          <li>12+ cores: 8 CPU workers</li>
+          <li>8+ cores: 6 CPU workers</li>
+          <li>16GB+ GPU: 8 parallel envs</li>
+          <li>8GB+ GPU: 4 parallel envs</li>
+        </ul>
+      </div>
+      <div class="detail-block">
+        <h4>Detection Capabilities</h4>
+        <ul>
+          <li>AMD/Intel CPU identification</li>
+          <li>DirectML GPU memory &amp; type</li>
+          <li>SAM/ReBAR via registry</li>
+          <li>Total RAM via WMI</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Strategy Division -->
+<div class="division-header strategy">
+  <div>
+    <h3>Strategy Division</h3>
+    <p>Post-pipeline analysis and config optimization proposals. LLM-powered with rule-based fallbacks.</p>
+  </div>
+</div>
+
+<div class="agent-grid">
+  <!-- Hedge Fund Director -->
+  <div class="agent-card">
+    <div class="header">
+      <div class="icon" style="background: rgba(188,140,255,0.15); color: var(--purple);">&#128200;</div>
+      <div class="title-block">
+        <h3>Hedge Fund Director</h3>
+        <div class="role">Strategic Config Advisor</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge badge-llm">LLM (Claude Haiku)</span>
+      <span class="badge badge-schedule">Every Pipeline Run</span>
+    </div>
+    <div class="description">
+      <p>
+        Analyzes pipeline results (CHIMERA fitness, Sharpe ratios, drawdowns, win rates) and
+        proposes specific parameter changes to <code>RewardConfig</code> and <code>PoolConfig</code>.
+        Generates strategy memos with confidence scores. Proposals are submitted through the
+        message bus to Senior Dev for safety review before application.
+      </p>
+    </div>
+    <div class="details">
+      <div class="detail-block">
+        <h4>Rule-Based Fallback Logic</h4>
+        <ul>
+          <li>No agents passed: reduce <code>transaction_penalty</code>, increase <code>reward_scale</code></li>
+          <li>Negative returns: tighten <code>max_drawdown</code>, increase <code>drawdown_penalty</code></li>
+          <li>Underperforming benchmark: reduce <code>holding_penalty</code></li>
+          <li>Good results (&gt;5%): no major changes</li>
+        </ul>
+      </div>
+      <div class="detail-block">
+        <h4>Output</h4>
+        <ul>
+          <li>Strategy memo (2-3 sentences)</li>
+          <li>JSON config patch (validated by Pydantic)</li>
+          <li>Confidence score (0.0 &ndash; 1.0)</li>
+          <li>Risk assessment (low/medium/high)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contrarian -->
+  <div class="agent-card">
+    <div class="header">
+      <div class="icon" style="background: rgba(248,81,73,0.15); color: var(--red);">&#9888;</div>
+      <div class="title-block">
+        <h3>Contrarian</h3>
+        <div class="role">Taleb-Style Adversarial Reviewer</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge badge-llm">LLM (Claude Haiku)</span>
+      <span class="badge badge-conditional">Conditional Trigger</span>
+    </div>
+    <div class="description">
+      <p>
+        The mandatory skeptic. Inspired by Nassim Taleb's philosophy, this agent fires
+        only when results look good &mdash; and its job is to find what's wrong.
+        Checks for overfitting, inflated Sharpe ratios, unrealistic cost assumptions,
+        and period-specific luck. Proposes stress-test configs with tighter constraints.
+      </p>
+    </div>
+    <div class="details">
+      <div class="detail-block">
+        <h4>Trigger Conditions</h4>
+        <ul>
+          <li>Any agent passed ATHENA validation</li>
+          <li>Best return exceeds threshold (&gt;0.5)</li>
+          <li>Pipeline declares convergence</li>
+          <li>Does NOT fire on bad results</li>
+        </ul>
+      </div>
+      <div class="detail-block">
+        <h4>Fragility Checks</h4>
+        <ul>
+          <li>Only 1 of many agents passed &rarr; fragile outlier</li>
+          <li>Return &gt;20% &rarr; likely overfitting</li>
+          <li>Transaction penalty &lt;0.01 &rarr; unrealistic</li>
+          <li>Max position &ge;50% &rarr; concentration risk</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Intelligence Division -->
+<div class="division-header intel">
+  <div>
+    <h3>Intelligence Division</h3>
+    <p>External data ingestion and technology scouting. LLM-powered with schedule-based execution.</p>
+  </div>
+</div>
+
+<div class="agent-grid">
+  <!-- Geopolitics Expert -->
+  <div class="agent-card">
+    <div class="header">
+      <div class="icon" style="background: rgba(57,210,192,0.15); color: var(--cyan);">&#127758;</div>
+      <div class="title-block">
+        <h3>Geopolitics Expert</h3>
+        <div class="role">News-Driven Regime Classification</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge badge-llm">LLM (Claude Haiku)</span>
+      <span class="badge badge-schedule">Daily</span>
+      <span class="badge badge-free">Free APIs</span>
+    </div>
+    <div class="description">
+      <p>
+        Fetches financial headlines from NewsAPI, Finnhub, or Yahoo Finance RSS (cascading
+        fallback). Classifies the macro regime as <code>risk_on</code>, <code>risk_off</code>,
+        or <code>crisis</code>. Output feeds into config adjustments &mdash; not trade signals.
+        For example, a crisis regime might tighten drawdown limits and reduce position sizes
+        in the next training cycle.
+      </p>
+    </div>
+    <div class="details">
+      <div class="detail-block">
+        <h4>News Sources</h4>
+        <ul>
+          <li><strong>NewsAPI</strong> &mdash; 100 req/day (free tier)</li>
+          <li><strong>Finnhub</strong> &mdash; 60 req/min (free tier)</li>
+          <li><strong>Yahoo RSS</strong> &mdash; unlimited (no key)</li>
+          <li>Falls back silently through the chain</li>
+        </ul>
+      </div>
+      <div class="detail-block">
+        <h4>Keyword Analysis (Fallback)</h4>
+        <ul>
+          <li><strong>Crisis:</strong> crash, panic, recession, contagion</li>
+          <li><strong>Risk-off:</strong> fear, sell-off, hawkish, tariff, war</li>
+          <li><strong>Risk-on:</strong> rally, surge, bull, rate cut, recovery</li>
+          <li>Counts keywords, highest bucket wins</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Innovation Scout -->
+  <div class="agent-card">
+    <div class="header">
+      <div class="icon" style="background: rgba(210,153,34,0.15); color: var(--orange);">&#128269;</div>
+      <div class="title-block">
+        <h3>Innovation Scout</h3>
+        <div class="role">Tool &amp; Technique Discovery</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge badge-llm">LLM (Claude Haiku)</span>
+      <span class="badge badge-schedule">Weekly</span>
+    </div>
+    <div class="description">
+      <p>
+        Searches for new tools, libraries, and techniques relevant to RL trading systems.
+        Produces structured "innovation briefs" with relevance scores, integration effort
+        estimates, and priority levels. Does NOT auto-install anything &mdash; proposals
+        are filed for CEO review on the dashboard.
+      </p>
+    </div>
+    <div class="details">
+      <div class="detail-block">
+        <h4>Focus Areas</h4>
+        <ul>
+          <li>RL trading frameworks (FinRL, etc.)</li>
+          <li>Stable-Baselines3 extensions</li>
+          <li>VectorBT and backtesting tools</li>
+          <li>Reward engineering techniques</li>
+        </ul>
+      </div>
+      <div class="detail-block">
+        <h4>Static Fallback Recommendations</h4>
+        <ul>
+          <li><strong>FinRL</strong> &mdash; RL trading framework</li>
+          <li><strong>SB3-Contrib</strong> &mdash; RecurrentPPO, TRPO</li>
+          <li><strong>Optuna</strong> &mdash; hyperparameter optimization</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Support -->
+<div class="division-header support">
+  <div>
+    <h3>Support</h3>
+    <p>A/B config testing via dual pipeline execution.</p>
+  </div>
+</div>
+
+<div class="agent-grid">
+  <!-- Shadow Trader -->
+  <div class="agent-card">
+    <div class="header">
+      <div class="icon" style="background: rgba(88,166,255,0.15); color: var(--accent);">&#128064;</div>
+      <div class="title-block">
+        <h3>Shadow Trader</h3>
+        <div class="role">Dual Pipeline A/B Testing</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge badge-python">Pure Python</span>
+      <span class="badge badge-free">$0 / run</span>
+      <span class="badge badge-conditional">When Shadow Config Set</span>
+    </div>
+    <div class="description">
+      <p>
+        Runs the primary (current best) config alongside an experimental shadow config proposed
+        by the Hedge Fund Director or Contrarian. Both pipelines share cached market data.
+        Tracks consecutive wins and recommends promotion after 3 straight shadow victories.
+        Used for backtesting and training comparison only.
+      </p>
+    </div>
+    <div class="details">
+      <div class="detail-block">
+        <h4>Comparison Logic</h4>
+        <ul>
+          <li>Runs both configs on same data</li>
+          <li>Compares best_return from each</li>
+          <li>Tracks win/loss history (last 20)</li>
+          <li>Calculates shadow win rate</li>
+        </ul>
+      </div>
+      <div class="detail-block">
+        <h4>Promotion Rules</h4>
+        <ul>
+          <li>3 consecutive shadow wins required</li>
+          <li>Sends promotion proposal (priority 4)</li>
+          <li>CEO must approve on dashboard</li>
+          <li>Shadow cleared after promotion/rejection</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MESSAGE BUS ============ -->
+<h2>Message Bus</h2>
+<p class="section-intro">
+  All inter-agent communication flows through typed messages stored in
+  <code>logs/corporation_state.json</code>. Messages have priority levels (1-5),
+  types, and optional response requirements.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Sender</th>
+      <th>Recipient</th>
+      <th>Type</th>
+      <th>Priority</th>
+      <th>Trigger</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Senior Dev</td>
+      <td>Chief of Staff</td>
+      <td><code>veto</code></td>
+      <td class="priority-5">5 (Critical)</td>
+      <td>Config on blacklist</td>
+    </tr>
+    <tr>
+      <td>Contrarian</td>
+      <td>Broadcast</td>
+      <td><code>alert</code></td>
+      <td class="priority-4">4 (High)</td>
+      <td>Fragility score &gt; 0.6</td>
+    </tr>
+    <tr>
+      <td>Shadow Trader</td>
+      <td>Chief of Staff</td>
+      <td><code>proposal</code></td>
+      <td class="priority-4">4 (High)</td>
+      <td>3+ consecutive shadow wins</td>
+    </tr>
+    <tr>
+      <td>Hedge Fund Director</td>
+      <td>Senior Dev</td>
+      <td><code>proposal</code></td>
+      <td class="priority-3">3 (Normal)</td>
+      <td>After every pipeline run</td>
+    </tr>
+    <tr>
+      <td>Geopolitics Expert</td>
+      <td>Chief of Staff</td>
+      <td><code>report</code></td>
+      <td class="priority-2">2 (Low)</td>
+      <td>Daily schedule</td>
+    </tr>
+    <tr>
+      <td>Innovation Scout</td>
+      <td>Chief of Staff</td>
+      <td><code>report</code></td>
+      <td class="priority-1">1 (Info)</td>
+      <td>Weekly schedule</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============ COST ============ -->
+<h2>Cost Breakdown</h2>
+<p class="section-intro">
+  The corporation is designed to run on minimal budget. Pure Python agents handle
+  all frequent operations; LLMs are reserved for infrequent strategic analysis.
+</p>
+
+<table class="cost-table">
+  <thead>
+    <tr>
+      <th>Agent</th>
+      <th>Type</th>
+      <th>Frequency</th>
+      <th>Cost / Call</th>
+      <th>Monthly Est.</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Chief of Staff</td>
+      <td>Pure Python</td>
+      <td>Every cycle</td>
+      <td>$0.00</td>
+      <td>$0.00</td>
+    </tr>
+    <tr>
+      <td>Senior Dev</td>
+      <td>Pure Python</td>
+      <td>Every cycle</td>
+      <td>$0.00</td>
+      <td>$0.00</td>
+    </tr>
+    <tr>
+      <td>Hardware Optimizer</td>
+      <td>Pure Python</td>
+      <td>Every cycle</td>
+      <td>$0.00</td>
+      <td>$0.00</td>
+    </tr>
+    <tr>
+      <td>Shadow Trader</td>
+      <td>Pure Python</td>
+      <td>When shadow set</td>
+      <td>$0.00</td>
+      <td>$0.00</td>
+    </tr>
+    <tr>
+      <td>Hedge Fund Director</td>
+      <td>Claude Haiku</td>
+      <td>~70/month</td>
+      <td>$0.0008</td>
+      <td>$0.056</td>
+    </tr>
+    <tr>
+      <td>Contrarian</td>
+      <td>Claude Haiku</td>
+      <td>~35/month</td>
+      <td>$0.0008</td>
+      <td>$0.028</td>
+    </tr>
+    <tr>
+      <td>Geopolitics Expert</td>
+      <td>Claude Haiku</td>
+      <td>~4/month</td>
+      <td>$0.0008</td>
+      <td>$0.003</td>
+    </tr>
+    <tr>
+      <td>Innovation Scout</td>
+      <td>Claude Haiku</td>
+      <td>~1/month</td>
+      <td>$0.0008</td>
+      <td>$0.001</td>
+    </tr>
+    <tr style="border-top: 2px solid var(--border); font-weight: 700;">
+      <td colspan="4">Total Monthly LLM Cost</td>
+      <td>~$0.09</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============ DATA PIPELINE ============ -->
+<h2>Data Pipeline</h2>
+<p class="section-intro">
+  The system supports both synthetic data (for development and testing) and real
+  historical data from Alpaca's free IEX feed (for meaningful backtesting).
+</p>
+
+<div class="schema-block">
+<pre>
+<span class="comment">Synthetic Mode (default):</span>
+  Random GBM prices &rarr; indicators (16 features) &rarr; StateBuilder (15N+5 obs)
+
+<span class="comment">Real Data Mode (--real-data):</span>
+  Alpaca IEX 5-min bars &rarr; Parquet cache &rarr; indicators (16 features) &rarr; StateBuilder (15N+5 obs)
+  |
+  +-- <span class="key">10 tickers:</span> <span class="type">NVDA, TSLA, AMD, MARA, COIN, META, AMZN, GOOGL, NFLX, SQ</span>
+  +-- <span class="key">Lookback:</span>   <span class="type">252 trading days (~1 year)</span>
+  +-- <span class="key">Interval:</span>   <span class="type">5-minute bars</span>
+  +-- <span class="key">Bars/ticker:</span> <span class="type">~19,000-22,000</span>
+  +-- <span class="key">Cache:</span>      <span class="type">data/bars_cache/{ticker}_{timeframe}_{start}_{end}.parquet</span>
+  +-- <span class="key">Cost:</span>       <span class="type">$0 (Alpaca IEX free tier)</span>
+
+<span class="comment">Each episode = 390 bars = 1 trading week of 5-min data</span>
+<span class="comment">30 generations x 100 episodes = 3,000 simulated weeks on real price history</span>
+</pre>
+</div>
+
+<!-- ============ STATE ============ -->
+<h2>Shared State</h2>
+<p class="section-intro">
+  All corp agents read from and write to a centralized JSON state file. This enables
+  persistence across restarts, multi-process safety, and dashboard access.
+</p>
+
+<div class="schema-block">
+<pre>
+<span class="comment">// logs/corporation_state.json</span>
+{
+  <span class="key">"messages"</span>:          [<span class="type">CorpMessage</span>, ...],       <span class="comment">// last 500</span>
+  <span class="key">"proposals"</span>:         [<span class="type">{source, memo, patch, confidence, status}</span>, ...],
+  <span class="key">"active_config_hash"</span>: <span class="type">"a1b2c3d4e5f6..."</span>,      <span class="comment">// 16-char SHA-256</span>
+  <span class="key">"regime"</span>: {
+    <span class="key">"classification"</span>:  <span class="type">"risk_on | risk_off | crisis"</span>,
+    <span class="key">"volatility_outlook"</span>: <span class="type">"low | stable | elevated | extreme"</span>,
+    <span class="key">"sector_bias"</span>:     <span class="type">{tech, energy, finance, healthcare, consumer}</span>,
+    <span class="key">"updated"</span>:         <span class="type">"2026-03-20T09:56:32Z"</span>
+  },
+  <span class="key">"innovation_briefs"</span>: [<span class="type">{tool_name, relevance, priority}</span>, ...],  <span class="comment">// last 50</span>
+  <span class="key">"shadow_results"</span>:    [<span class="type">{primary_return, shadow_return, shadow_won}</span>, ...],
+  <span class="key">"shadow_consecutive_wins"</span>: <span class="type">int</span>,
+  <span class="key">"pipeline_run_count"</span>:      <span class="type">int</span>,
+  <span class="key">"last_pipeline_result"</span>: {
+    <span class="key">"best_agent"</span>:      <span class="type">"rppo_1_gen2530"</span>,
+    <span class="key">"best_return"</span>:     <span class="type">0.0069</span>,
+    <span class="key">"passed_count"</span>:    <span class="type">0</span>,
+    <span class="key">"excess_return"</span>:   <span class="type">0.0042</span>
+  },
+  <span class="key">"agent_performance_history"</span>: [...]  <span class="comment">// last 100 runs</span>
+}
+</pre>
+</div>
+
+<!-- ============ FILE STRUCTURE ============ -->
+<h2>File Structure</h2>
+
+<div class="schema-block">
+<pre>
+C:\TradingAgents\hydra\
+<span class="key">corp/</span>
+  <span class="key">config/</span>
+    corp_config.py            <span class="comment"># CorporationConfig, LLMConfig, ScheduleConfig</span>
+  <span class="key">state/</span>
+    corporation_state.py      <span class="comment"># JSON-backed shared state (messages, proposals, regime)</span>
+    message_bus.py            <span class="comment"># CorpMessage dataclass &amp; routing</span>
+    config_blacklist.py       <span class="comment"># SHA-256 hash tracking for failed configs</span>
+    decision_log.py           <span class="comment"># Append-only JSONL audit trail</span>
+  <span class="key">agents/</span>
+    base_corp_agent.py        <span class="comment"># Abstract base: run(), report(), send_message()</span>
+    chief_of_staff.py         <span class="comment"># Central coordinator / router</span>
+    senior_dev.py             <span class="comment"># Config validation &amp; regression prevention</span>
+    hardware_optimizer.py     <span class="comment"># CPU/GPU detection &amp; tuning</span>
+    shadow_trader.py          <span class="comment"># Dual pipeline A/B comparison</span>
+    hedge_fund_director.py    <span class="comment"># LLM strategic advisor</span>
+    contrarian.py             <span class="comment"># LLM adversarial reviewer</span>
+    geopolitics_expert.py     <span class="comment"># News-driven regime classification</span>
+    innovation_scout.py       <span class="comment"># Tool/technique discovery</span>
+  <span class="key">graph/</span>
+    corporation_graph.py      <span class="comment"># 6-node DAG executor (LangGraph-compatible)</span>
+    nodes.py                  <span class="comment"># Standalone node functions</span>
+    conditions.py             <span class="comment"># Conditional routing functions</span>
+  <span class="key">prompts/</span>
+    hedge_fund_director.txt   <span class="comment"># System prompt + few-shot examples</span>
+    contrarian.txt            <span class="comment"># Taleb-style adversarial prompt</span>
+    geopolitics.txt           <span class="comment"># News analysis prompt</span>
+    innovation_scout.txt      <span class="comment"># Tool evaluation prompt</span>
+    ceo_briefing.txt          <span class="comment"># CEO summary prompt</span>
+  <span class="key">scripts/</span>
+    run_corporation.py        <span class="comment"># Main CLI entry point</span>
+
+<span class="key">scripts/ceo_dashboard/</span>
+  app.py                      <span class="comment"># Streamlit app (port 5050)</span>
+  data_loader.py              <span class="comment"># JSON &rarr; CEO-friendly transforms</span>
+  config.py                   <span class="comment"># Colors, friendly names, CAD scaling</span>
+  <span class="key">components/</span>
+    hero_kpis.py              <span class="comment"># Portfolio value, P&amp;L, return cards</span>
+    portfolio_chart.py        <span class="comment"># Equity curve (Hydra vs SPY)</span>
+    agent_leaderboard.py      <span class="comment"># Ranked agent table with dollar returns</span>
+    risk_gauges.py            <span class="comment"># Safety score, drawdown, win rate</span>
+    alert_feed.py             <span class="comment"># Chronological event feed</span>
+    benchmark_table.py        <span class="comment"># Hydra vs SPY vs QQQ comparison</span>
+    training_status.py        <span class="comment"># Last training details (collapsed)</span>
+
+<span class="key">tests/</span>
+  test_corp.py                <span class="comment"># 23 tests covering all agents &amp; infra</span>
+</pre>
+</div>
+
+<!-- ============ GRACEFUL DEGRADATION ============ -->
+<h2>Design Principles</h2>
+
+<div class="agent-grid" style="grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div class="detail-block">
+    <h4>Graceful Degradation</h4>
+    <ul>
+      <li>Every LLM agent has a rule-based fallback</li>
+      <li>News APIs cascade: NewsAPI &rarr; Finnhub &rarr; RSS</li>
+      <li>No API key? System runs fully on heuristics</li>
+      <li>SQ has no IEX data? Falls back to synthetic</li>
+    </ul>
+  </div>
+  <div class="detail-block">
+    <h4>Safety First</h4>
+    <ul>
+      <li>Senior Dev validates every config before execution</li>
+      <li>Contrarian challenges every positive result</li>
+      <li>Blacklist prevents regression to failed configs</li>
+      <li>All proposals require review before application</li>
+    </ul>
+  </div>
+  <div class="detail-block">
+    <h4>Full Auditability</h4>
+    <ul>
+      <li>Every decision logged to JSONL with timestamps</li>
+      <li>Message bus tracks all inter-agent communication</li>
+      <li>Config hashes enable exact experiment reproduction</li>
+      <li>Proposals tracked from submission to resolution</li>
+    </ul>
+  </div>
+  <div class="detail-block">
+    <h4>Cost Discipline</h4>
+    <ul>
+      <li>Pure Python for all frequent operations</li>
+      <li>LLMs only for infrequent strategic analysis</li>
+      <li>Monthly budget cap in config ($10 default)</li>
+      <li>Free APIs for all external data sources</li>
+    </ul>
+  </div>
+</div>
+
+</div><!-- /container -->
+
+<div class="footer">
+  HydraCorp Architecture Documentation &mdash; Generated March 2026
+  <br>
+  Built on the Hydra Multi-Agent RL Trading System
+</div>
+
+</body>
+</html>

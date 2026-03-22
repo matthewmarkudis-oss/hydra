@@ -262,6 +262,86 @@ def upper_wick_ratio(
     return (upper_shadow / np.maximum(bar_range, eps)).astype(np.float32)
 
 
+def vol_regime(
+    atr_values: np.ndarray,
+    slow_period: int = 50,
+) -> np.ndarray:
+    """Volatility expansion/contraction ratio.
+
+    Current ATR relative to its own long-term average.
+    >1.0 = volatility expanding, <1.0 = contracting.
+
+    Returns:
+        Float32 array. NaN during warmup (first slow_period bars).
+    """
+    # Fill NaN from ATR warmup so cumsum-based _sma doesn't propagate NaN
+    atr_clean = atr_values.copy()
+    nan_mask = np.isnan(atr_clean)
+    first_valid = np.argmin(nan_mask)  # index of first non-NaN
+    if nan_mask.all():
+        return np.full_like(atr_values, np.nan)
+    atr_clean[:first_valid] = atr_clean[first_valid]
+
+    sma_atr = _sma(atr_clean, slow_period)
+    eps = np.float32(1e-10)
+    ratio = atr_clean / np.maximum(sma_atr, eps)
+    # NaN warmup: need slow_period bars of valid ATR for meaningful SMA
+    warmup = max(slow_period, first_valid + slow_period)
+    ratio[:warmup] = np.nan
+    return ratio.astype(np.float32)
+
+
+def trend_strength(close: np.ndarray, period: int = 20) -> np.ndarray:
+    """Kaufman Efficiency Ratio — directional strength of price movement.
+
+    abs(net price change over N bars) / sum(abs(bar-to-bar changes)).
+    Close to 1.0 = strong trend, close to 0.0 = choppy/ranging.
+
+    Returns:
+        Float32 array in [0, 1]. NaN during warmup (first period bars).
+    """
+    out = np.full_like(close, np.nan)
+    if len(close) <= period:
+        return out.astype(np.float32)
+
+    abs_diff = np.abs(np.diff(close))
+    for i in range(period, len(close)):
+        net_change = abs(close[i] - close[i - period])
+        sum_changes = np.sum(abs_diff[i - period:i])
+        if sum_changes > 1e-10:
+            out[i] = net_change / sum_changes
+        else:
+            out[i] = 0.0
+
+    return out.astype(np.float32)
+
+
+def mean_reversion_z(
+    close: np.ndarray,
+    atr_values: np.ndarray,
+    sma_period: int = 50,
+) -> np.ndarray:
+    """ATR-normalized deviation from moving average.
+
+    (close - SMA) / ATR — how far price has stretched from its mean,
+    measured in volatility units. Positive = overbought, negative = oversold.
+
+    Returns:
+        Float32 array. NaN during warmup (first sma_period bars).
+    """
+    sma_close = _sma(close, sma_period)
+    # Use cleaned ATR (fill NaN warmup) to avoid division issues
+    atr_clean = atr_values.copy()
+    nan_mask = np.isnan(atr_clean)
+    if not nan_mask.all():
+        first_valid = np.argmin(nan_mask)
+        atr_clean[:first_valid] = atr_clean[first_valid]
+    eps = np.float32(1e-10)
+    z = (close - sma_close) / np.maximum(atr_clean, eps)
+    z[:sma_period] = np.nan
+    return z.astype(np.float32)
+
+
 def compute_all_indicators(
     ohlcv: dict[str, np.ndarray],
 ) -> dict[str, np.ndarray]:
@@ -282,7 +362,7 @@ def compute_all_indicators(
     macd_line, macd_signal, macd_hist = macd(c)
     atr_vals = atr(h, l, c)
 
-    return {
+    result = {
         "rsi": rsi(c),
         "macd_line": macd_line,
         "macd_signal": macd_signal,
@@ -296,7 +376,24 @@ def compute_all_indicators(
         "close_range_position": close_range_position(h, l, c),
         "bar_momentum": bar_momentum(c, h, l, atr_values=atr_vals),
         "upper_wick_ratio": upper_wick_ratio(o, h, l, c),
+        # Regime features
+        "vol_regime": vol_regime(atr_vals),
+        "trend_strength": trend_strength(c),
+        "mean_reversion_z": mean_reversion_z(c, atr_vals),
     }
+
+    # Sentiment features (injected from external data; zero-fallback if absent)
+    n = len(c)
+    if "news_sentiment" in ohlcv:
+        result["news_sentiment"] = ohlcv["news_sentiment"].astype(np.float32)
+        result["sentiment_momentum"] = _sma(ohlcv["news_sentiment"].astype(np.float32), 5)
+        # Fill NaN warmup with zeros
+        result["sentiment_momentum"] = np.nan_to_num(result["sentiment_momentum"], nan=0.0).astype(np.float32)
+    else:
+        result["news_sentiment"] = np.zeros(n, dtype=np.float32)
+        result["sentiment_momentum"] = np.zeros(n, dtype=np.float32)
+
+    return result
 
 
 # --- Internal helpers ---

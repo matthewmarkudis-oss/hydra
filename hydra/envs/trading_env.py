@@ -1,7 +1,8 @@
-"""Single-agent intraday trading environment.
+"""Single-agent trading environment.
 
 Gymnasium-compatible environment for RL training on 5-min bar data.
-Each episode is one trading day (~78 bars). All internals use float32 numpy.
+Each episode spans episode_bars bars (default 390 = 1 trading week).
+All internals use float32 numpy.
 For backtesting/simulation only.
 """
 
@@ -25,12 +26,12 @@ from hydra.utils.numpy_opts import extract_ohlcv_arrays, SharedMarketData
 
 
 class TradingEnv(gym.Env):
-    """Single-agent intraday trading environment.
+    """Single-agent trading environment.
 
-    Observation: float32 vector of dimension 12*num_stocks + 5.
+    Observation: float32 vector of dimension 17*num_stocks + 5.
     Action: continuous Box[-1, +1] per stock.
-    Reward: Differential Sharpe + penalties.
-    Episode: one trading day of 5-min bars.
+    Reward: Differential Sharpe + P&L bonus + penalties.
+    Episode: configurable window of 5-min bars (default 390 = 1 week).
     """
 
     metadata = {"render_modes": ["human"]}
@@ -39,21 +40,23 @@ class TradingEnv(gym.Env):
         self,
         market_data: SharedMarketData | None = None,
         num_stocks: int = 10,
-        episode_bars: int = 78,
+        episode_bars: int = 390,
         initial_cash: float = 100_000.0,
         transaction_cost_bps: float = 5.0,
         slippage_bps: float = 2.0,
         spread_bps: float = 1.0,
-        max_position_pct: float = 0.10,
-        max_drawdown_pct: float = 0.10,
-        max_daily_loss_pct: float = 0.03,
+        max_position_pct: float = 0.30,
+        max_drawdown_pct: float = 0.20,
+        max_daily_loss_pct: float = 0.05,
         sharpe_eta: float = 0.05,
-        drawdown_penalty: float = 2.0,
-        transaction_penalty: float = 0.5,
-        holding_penalty: float = 0.0,
+        drawdown_penalty: float = 0.5,
+        transaction_penalty: float = 0.1,
+        holding_penalty: float = 0.1,
+        pnl_bonus_weight: float = 1.0,
         reward_scale: float = 100.0,
         dead_zone: float = 0.0,
         normalize_obs: bool = True,
+        augment: bool = False,
         seed: int | None = None,
         render_mode: str | None = None,
     ):
@@ -64,6 +67,30 @@ class TradingEnv(gym.Env):
         self.initial_cash = initial_cash
         self.render_mode = render_mode
         self._seed = seed
+        self._augment = augment
+
+        # Store constructor kwargs for creating vectorized copies
+        self._init_kwargs = {
+            "market_data": market_data,
+            "num_stocks": num_stocks,
+            "episode_bars": episode_bars,
+            "initial_cash": initial_cash,
+            "transaction_cost_bps": transaction_cost_bps,
+            "slippage_bps": slippage_bps,
+            "spread_bps": spread_bps,
+            "max_position_pct": max_position_pct,
+            "max_drawdown_pct": max_drawdown_pct,
+            "max_daily_loss_pct": max_daily_loss_pct,
+            "sharpe_eta": sharpe_eta,
+            "drawdown_penalty": drawdown_penalty,
+            "transaction_penalty": transaction_penalty,
+            "holding_penalty": holding_penalty,
+            "pnl_bonus_weight": pnl_bonus_weight,
+            "reward_scale": reward_scale,
+            "dead_zone": dead_zone,
+            "normalize_obs": normalize_obs,
+            "augment": augment,
+        }
 
         # Components
         self.simulator = MarketSimulator(
@@ -91,6 +118,7 @@ class TradingEnv(gym.Env):
             drawdown_penalty=drawdown_penalty,
             transaction_penalty=transaction_penalty,
             holding_penalty=holding_penalty,
+            pnl_bonus_weight=pnl_bonus_weight,
             reward_scale=reward_scale,
         )
 
@@ -124,13 +152,17 @@ class TradingEnv(gym.Env):
         self._num_episodes = 0
         self._total_days_available = 0
 
+    def get_init_kwargs(self) -> dict[str, Any]:
+        """Return constructor kwargs for creating matching env copies (e.g. for VecEnv)."""
+        return dict(self._init_kwargs)
+
     def reset(
         self,
         *,
         seed: int | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        """Reset environment for a new episode (one trading day)."""
+        """Reset environment for a new episode."""
         super().reset(seed=seed)
 
         self._step_count = 0
@@ -263,19 +295,41 @@ class TradingEnv(gym.Env):
         return obs, float(reward), terminated, truncated, info
 
     def _load_episode_data(self, options: dict | None) -> None:
-        """Load market data for the current episode."""
+        """Load market data for the current episode.
+
+        When real market data is available, picks a random window of
+        ``episode_bars`` bars from the full dataset.  Each reset() with a
+        different RNG state produces a different window, so training and
+        eval episodes see diverse market conditions instead of always
+        replaying the first 78 bars.
+        """
         if self._market_data is not None:
             self._tickers = list(self._market_data.tickers)[:self.num_stocks]
+            total_bars = self._market_data.num_bars
+            self._total_days_available = total_bars // self.episode_bars
+
+            # Pick a random start offset within the data
+            if total_bars > self.episode_bars:
+                max_start = total_bars - self.episode_bars
+                start = int(self.np_random.integers(0, max_start + 1))
+            else:
+                start = 0
+            end = start + self.episode_bars
+
             self._episode_features = {}
             for ticker in self._tickers:
                 ohlcv = self._market_data.get_ohlcv(ticker)
-                features = {**ohlcv}
+                features = {}
+                for key, arr in ohlcv.items():
+                    features[key] = arr[start:end]
                 for ind_name in ("rsi", "macd_hist", "cci", "bb_pct_b", "volume_ratio", "trend_direction",
-                                "bar_body_ratio", "close_range_position", "bar_momentum", "upper_wick_ratio"):
+                                "bar_body_ratio", "close_range_position", "bar_momentum", "upper_wick_ratio",
+                                "news_sentiment", "sentiment_momentum"):
                     try:
-                        features[ind_name] = self._market_data.get_indicator(ticker, ind_name)
+                        arr = self._market_data.get_indicator(ticker, ind_name)
+                        features[ind_name] = arr[start:end]
                     except KeyError:
-                        features[ind_name] = np.zeros(self._market_data.num_bars, dtype=np.float32)
+                        features[ind_name] = np.zeros(self.episode_bars, dtype=np.float32)
                 self._episode_features[ticker] = features
         else:
             # Generate synthetic data for training/testing
@@ -292,6 +346,76 @@ class TradingEnv(gym.Env):
                 ohlcv = extract_ohlcv_arrays(df)
                 indicators = compute_all_indicators(ohlcv)
                 self._episode_features[ticker] = {**ohlcv, **indicators}
+
+        # Apply data augmentation (training only)
+        self._augment_episode_data()
+
+    def _augment_episode_data(self) -> None:
+        """Apply lightweight episode-level data augmentation.
+
+        Only active when ``self._augment`` is True (training mode).
+        Three augmentations are applied in sequence:
+
+        1. **Price noise injection** -- multiplicative Normal(0, 0.001) noise
+           on OHLC prices (same noise per bar to preserve relationships) and
+           independent Normal(0, 0.01) noise on volume.
+        2. **Ticker shuffle** -- 30% chance to randomly permute ticker order,
+           preventing the agent from memorising positional stock identity.
+        3. **Time masking** -- 20% chance to zero-out a contiguous block of
+           5--15 bars across all technical indicator channels, forcing the
+           agent to be robust to missing indicator data.
+        """
+        if not self._augment:
+            return
+
+        rng = self.np_random
+        n_bars = self.episode_bars
+        price_keys = ("open", "high", "low", "close")
+        indicator_keys = (
+            "rsi", "macd_hist", "cci", "bb_pct_b", "volume_ratio",
+            "bar_body_ratio", "close_range_position", "bar_momentum",
+            "upper_wick_ratio",
+        )
+
+        # --- 1) Price noise injection (multiplicative) ---
+        for ticker in self._tickers:
+            feats = self._episode_features[ticker]
+            # Same noise for OHLC within each bar, different across bars
+            price_noise = rng.standard_normal(n_bars).astype(np.float32) * 0.001
+            price_mult = np.float32(1.0) + price_noise
+            for key in price_keys:
+                if key in feats:
+                    feats[key] = feats[key] * price_mult
+            # Independent noise for volume
+            if "volume" in feats:
+                vol_noise = rng.standard_normal(n_bars).astype(np.float32) * 0.01
+                vol_mult = np.float32(1.0) + vol_noise
+                feats["volume"] = feats["volume"] * vol_mult
+                # Volume must stay non-negative
+                np.maximum(feats["volume"], 0.0, out=feats["volume"])
+
+        # --- 2) Ticker shuffle (30% probability) ---
+        if rng.random() < 0.3 and len(self._tickers) > 1:
+            perm = rng.permutation(len(self._tickers))
+            shuffled_tickers = [self._tickers[i] for i in perm]
+            shuffled_features = {
+                shuffled_tickers[j]: self._episode_features[self._tickers[perm[j]]]
+                for j in range(len(shuffled_tickers))
+            }
+            self._tickers = shuffled_tickers
+            self._episode_features = shuffled_features
+
+        # --- 3) Time masking (20% probability) ---
+        if rng.random() < 0.2:
+            mask_len = int(rng.integers(5, 16))  # 5..15 inclusive
+            max_start = max(n_bars - mask_len, 0)
+            mask_start = int(rng.integers(0, max_start + 1))
+            mask_end = mask_start + mask_len
+            for ticker in self._tickers:
+                feats = self._episode_features[ticker]
+                for ind in indicator_keys:
+                    if ind in feats:
+                        feats[ind][mask_start:mask_end] = 0.0
 
     def render(self) -> None:
         """Render current state (human-readable)."""

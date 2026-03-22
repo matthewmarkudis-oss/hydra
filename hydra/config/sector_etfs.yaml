@@ -1,0 +1,12 @@
+# Sector ETF training configuration for Hydra
+# Usage: python scripts/train.py --config hydra/config/sector_etfs.yaml --real-data
+#
+# These 10 ETFs cover all 11 GICS sectors (Real Estate via XLRE),
+# giving agents diverse macro exposure without single-stock noise.
+
+data:
+  tickers: [XLK, XLF, XLE, XLV, XLI, XLU, XLP, XLY, XLB, XLRE]
+  lookback_days: 60
+
+env:
+  num_stocks: 10

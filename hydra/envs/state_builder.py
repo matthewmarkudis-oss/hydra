@@ -27,19 +27,27 @@ class StateBuilder:
         [9N+1:10N+1]   close_range_pos     (settlement strength, [0, 1])
         [10N+1:11N+1]  bar_momentum        (ATR-normalized momentum, [-1, 1])
         [11N+1:12N+1]  upper_wick_ratio    (rejection at highs, [0, 1])
-        [12N+1]        drawdown            (current drawdown, negative)
-        [12N+2]        daily_pnl           (today's P&L as fraction of initial)
-        [12N+3]        session_label       (session type / 6.0, normalized to ~[0, 1])
-        [12N+4]        time_progress       (bar_index / total_bars, [0, 1])
+        --- Regime features ---
+        [12N+1:13N+1]  vol_regime          (ATR / long-term ATR, [0, 1])
+        [13N+1:14N+1]  trend_strength      (Kaufman efficiency ratio, [0, 1])
+        [14N+1:15N+1]  mean_reversion_z    (price deviation z-score, [-1, 1])
+        --- Sentiment features ---
+        [15N+1:16N+1]  news_sentiment      (news sentiment score, [-1, 1])
+        [16N+1:17N+1]  sentiment_momentum  (5-bar SMA of sentiment, [-1, 1])
+        --- Global features ---
+        [17N+1]        drawdown            (current drawdown, negative)
+        [17N+2]        daily_pnl           (today's P&L as fraction of initial)
+        [17N+3]        session_label       (session type / 6.0, normalized to ~[0, 1])
+        [17N+4]        time_progress       (bar_index / total_bars, [0, 1])
 
-    Total dims = 1 + 12*N + 4 = 12*N + 5
+    Total dims = 1 + 17*N + 4 = 17*N + 5
     """
 
     def __init__(self, num_stocks: int, episode_bars: int = 78, normalize: bool = True):
         self.num_stocks = num_stocks
         self.episode_bars = episode_bars
         self.normalize = normalize
-        self.obs_dim = 12 * num_stocks + 5
+        self.obs_dim = 17 * num_stocks + 5
 
         # Pre-computed episode data (set at episode start)
         self._close_matrix: np.ndarray | None = None  # (bars, stocks)
@@ -53,6 +61,13 @@ class StateBuilder:
         self._close_range_matrix: np.ndarray | None = None
         self._momentum_matrix: np.ndarray | None = None
         self._upper_wick_matrix: np.ndarray | None = None
+        # Regime features
+        self._vol_regime_matrix: np.ndarray | None = None
+        self._trend_strength_matrix: np.ndarray | None = None
+        self._mr_z_matrix: np.ndarray | None = None
+        # Sentiment features
+        self._sentiment_matrix: np.ndarray | None = None
+        self._sentiment_momentum_matrix: np.ndarray | None = None
         self._session_labels: np.ndarray | None = None
         self._start_prices: np.ndarray | None = None
 
@@ -116,6 +131,28 @@ class StateBuilder:
             [features[t].get("upper_wick_ratio", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
         ).astype(np.float32)
 
+        # Regime features
+        self._vol_regime_matrix = np.column_stack(
+            [features[t].get("vol_regime", np.ones(bars, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
+        self._trend_strength_matrix = np.column_stack(
+            [features[t].get("trend_strength", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
+        self._mr_z_matrix = np.column_stack(
+            [features[t].get("mean_reversion_z", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
+        # Sentiment features (zero-fallback when unavailable)
+        self._sentiment_matrix = np.column_stack(
+            [features[t].get("news_sentiment", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
+        self._sentiment_momentum_matrix = np.column_stack(
+            [features[t].get("sentiment_momentum", np.zeros(bars, dtype=np.float32))[:bars] for t in tickers]
+        ).astype(np.float32)
+
         self._session_labels = session_labels if session_labels is not None else np.zeros(bars, dtype=np.int8)
         self._start_prices = self._close_matrix[0].copy()
 
@@ -130,6 +167,35 @@ class StateBuilder:
         np.nan_to_num(self._close_range_matrix, copy=False, nan=0.5)
         np.nan_to_num(self._momentum_matrix, copy=False, nan=0.0)
         np.nan_to_num(self._upper_wick_matrix, copy=False, nan=0.0)
+        np.nan_to_num(self._vol_regime_matrix, copy=False, nan=1.0)
+        np.nan_to_num(self._trend_strength_matrix, copy=False, nan=0.0)
+        np.nan_to_num(self._mr_z_matrix, copy=False, nan=0.0)
+        np.nan_to_num(self._sentiment_matrix, copy=False, nan=0.0)
+        np.nan_to_num(self._sentiment_momentum_matrix, copy=False, nan=0.0)
+
+        # Pre-compute normalized observation template for all steps.
+        # This moves 16 indicator normalizations from per-step to per-episode,
+        # so build() just copies one row instead of doing 16 indexing + clip ops.
+        safe_start = np.maximum(self._start_prices, np.float32(1e-8))
+        template = np.empty((bars, 16 * n), dtype=np.float32)
+        template[:, 0:n] = self._close_matrix / safe_start[np.newaxis, :]
+        template[:, n:2*n] = self._rsi_matrix / np.float32(100.0)
+        template[:, 2*n:3*n] = np.clip(self._macd_matrix / np.float32(5.0), -1.0, 1.0)
+        template[:, 3*n:4*n] = np.clip(self._cci_matrix / np.float32(200.0), -1.0, 1.0)
+        template[:, 4*n:5*n] = np.clip(self._bb_matrix, 0.0, 1.0)
+        template[:, 5*n:6*n] = np.clip(self._vol_matrix, 0.0, 5.0) / np.float32(5.0)
+        template[:, 6*n:7*n] = self._trend_matrix
+        template[:, 7*n:8*n] = self._body_ratio_matrix
+        template[:, 8*n:9*n] = self._close_range_matrix
+        template[:, 9*n:10*n] = self._momentum_matrix
+        template[:, 10*n:11*n] = self._upper_wick_matrix
+        template[:, 11*n:12*n] = np.clip(self._vol_regime_matrix, 0.0, 3.0) / np.float32(3.0)
+        template[:, 12*n:13*n] = np.clip(self._trend_strength_matrix, 0.0, 1.0)
+        template[:, 13*n:14*n] = np.clip(self._mr_z_matrix, -3.0, 3.0) / np.float32(3.0)
+        # Sentiment features (already in [-1, 1])
+        template[:, 14*n:15*n] = np.clip(self._sentiment_matrix, -1.0, 1.0)
+        template[:, 15*n:16*n] = np.clip(self._sentiment_momentum_matrix, -1.0, 1.0)
+        self._obs_template = template
 
     def build(
         self,
@@ -141,6 +207,9 @@ class StateBuilder:
         peak_value: float,
     ) -> np.ndarray:
         """Build observation vector for the current step.
+
+        Uses the pre-computed observation template for all indicator values
+        (single memcpy), then fills in runtime portfolio state.
 
         Args:
             step: Current bar index within the episode.
@@ -162,45 +231,14 @@ class StateBuilder:
         # Holdings (normalized by a reference scale)
         obs[1:n + 1] = holdings.astype(np.float32) / np.float32(100.0)
 
-        # Prices (normalized by episode start price)
-        prices = self._close_matrix[step]
-        obs[n + 1:2 * n + 1] = prices / np.maximum(self._start_prices, np.float32(1e-8))
-
-        # RSI (0-100 → 0-1)
-        obs[2 * n + 1:3 * n + 1] = self._rsi_matrix[step] / np.float32(100.0)
-
-        # MACD histogram (z-score-like: divide by mean absolute value)
-        macd_vals = self._macd_matrix[step]
-        obs[3 * n + 1:4 * n + 1] = np.clip(macd_vals / np.float32(5.0), -1.0, 1.0)
-
-        # CCI (-200 to 200 → -1 to 1)
-        obs[4 * n + 1:5 * n + 1] = np.clip(self._cci_matrix[step] / np.float32(200.0), -1.0, 1.0)
-
-        # Bollinger %B (already ~[0, 1])
-        obs[5 * n + 1:6 * n + 1] = np.clip(self._bb_matrix[step], 0.0, 1.0)
-
-        # Volume ratio (clipped to [0, 5], then /5 to normalize)
-        obs[6 * n + 1:7 * n + 1] = np.clip(self._vol_matrix[step], 0.0, 5.0) / np.float32(5.0)
-
-        # Trend direction (already -1, 0, +1)
-        obs[7 * n + 1:8 * n + 1] = self._trend_matrix[step]
-
-        # Price action indicators
-        obs[8 * n + 1:9 * n + 1] = self._body_ratio_matrix[step]
-        obs[9 * n + 1:10 * n + 1] = self._close_range_matrix[step]
-        obs[10 * n + 1:11 * n + 1] = self._momentum_matrix[step]
-        obs[11 * n + 1:12 * n + 1] = self._upper_wick_matrix[step]
+        # All 16 indicator groups — pre-computed and normalized at episode start
+        obs[n + 1:17 * n + 1] = self._obs_template[step]
 
         # Global features
-        idx = 12 * n + 1
-        drawdown = (portfolio_value - peak_value) / max(peak_value, 1e-8)
-        obs[idx] = np.float32(drawdown)
-
-        daily_pnl = (portfolio_value - initial_cash) / max(initial_cash, 1e-8)
-        obs[idx + 1] = np.float32(daily_pnl)
-
+        idx = 17 * n + 1
+        obs[idx] = np.float32((portfolio_value - peak_value) / max(peak_value, 1e-8))
+        obs[idx + 1] = np.float32((portfolio_value - initial_cash) / max(initial_cash, 1e-8))
         obs[idx + 2] = np.float32(self._session_labels[step]) / np.float32(6.0)
-
         obs[idx + 3] = np.float32(step) / np.float32(max(self.episode_bars - 1, 1))
 
         return obs

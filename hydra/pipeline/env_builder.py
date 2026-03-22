@@ -21,7 +21,7 @@ def build_environments(
     deps: dict[str, Any],
     num_stocks: int = 10,
     episode_bars: int = 78,
-    initial_cash: float = 100_000.0,
+    initial_cash: float = 2_500.0,
     train_ratio: float = 0.6,
     val_ratio: float = 0.2,
     seed: int = 42,
@@ -53,11 +53,14 @@ def build_environments(
     # Date-based splitting would slice the SharedMarketData by day index
     envs = {}
     for split in ["train", "val", "test"]:
+        # Augmentation only during training — prevents overfitting
+        augment = (split == "train")
         envs[f"{split}_env"] = TradingEnv(
             market_data=market_data,
             num_stocks=actual_num_stocks,
             episode_bars=episode_bars,
             initial_cash=initial_cash,
+            augment=augment,
             seed=seed + hash(split),
             **env_kwargs,
         )

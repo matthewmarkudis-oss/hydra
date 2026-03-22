@@ -2,7 +2,7 @@ env:
   num_stocks: 10
   episode_bars: 78
   bar_interval_minutes: 5
-  initial_cash: 100000.0
+  initial_cash: 2500.0
   transaction_cost_bps: 5.0
   slippage_bps: 10.0
   spread_bps: 2.0

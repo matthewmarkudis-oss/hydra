@@ -32,7 +32,8 @@ class SACAgent(BaseRLAgent):
         gamma: float = 0.99,
         tau: float = 0.005,
         ent_coef: str = "auto",
-        learning_starts: int = 1000,
+        learning_starts: int = 100,
+        net_arch: list[int] | None = None,
         prefer_gpu: bool = True,
     ):
         super().__init__(name, obs_dim, action_dim)
@@ -43,6 +44,7 @@ class SACAgent(BaseRLAgent):
         self.tau = tau
         self.ent_coef = ent_coef
         self.learning_starts = learning_starts
+        self.net_arch = net_arch or [256, 256]
 
         self._device = _get_device(prefer_gpu)
         self._model = None
@@ -68,6 +70,8 @@ class SACAgent(BaseRLAgent):
             device = _resolve_sb3_device(self._device)
             dummy_env = _make_dummy_env(obs_space, action_space)
 
+            policy_kwargs = {"net_arch": self.net_arch}
+
             self._model = SAC(
                 "MlpPolicy",
                 env=dummy_env,
@@ -78,6 +82,7 @@ class SACAgent(BaseRLAgent):
                 tau=self.tau,
                 ent_coef=self.ent_coef,
                 learning_starts=self.learning_starts,
+                policy_kwargs=policy_kwargs,
                 device=device,
                 verbose=0,
             )
@@ -113,12 +118,31 @@ class SACAgent(BaseRLAgent):
         return {"updated": 1.0}
 
     def train_on_env(self, env, total_timesteps: int) -> dict[str, float]:
-        """Train directly on a gymnasium environment."""
+        """Train directly on a gymnasium environment.
+
+        Only calls set_env() when the env reference actually changed, to
+        preserve the replay buffer across generations.  When switching from
+        n_envs=1 (dummy) to n_envs=4 (VecEnv), uses save/load to resize
+        internal buffers (set_env rejects n_envs changes).
+        """
         self._ensure_model()
         if self._frozen:
             return {"skipped": 1.0}
 
-        self._model.set_env(env)
+        # Only set_env if env changed (preserves replay buffer)
+        if self._model.get_env() is not env:
+            current_n = getattr(self._model.get_env(), "num_envs", 1)
+            new_n = getattr(env, "num_envs", 1)
+            if current_n != new_n:
+                import tempfile, os
+                from stable_baselines3 import SAC
+                with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
+                    tmp_path = f.name
+                self._model.save(tmp_path)
+                self._model = SAC.load(tmp_path, env=env, device=self._model.device)
+                os.unlink(tmp_path)
+            else:
+                self._model.set_env(env)
         self._model.learn(total_timesteps=total_timesteps, reset_num_timesteps=False)
         self._total_steps += total_timesteps
 

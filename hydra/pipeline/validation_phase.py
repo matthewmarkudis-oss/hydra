@@ -59,6 +59,7 @@ def run_validation(
     """
     pool_update_result = deps.get("pool_update", deps.get("train_phase", {}))
     env_result = deps.get("env_builder", {})
+    data_result = deps.get("data_prep", env_result.get("data_prep", {}))
 
     pool: AgentPool = pool_update_result.get("pool")
     test_env: TradingEnv = env_result.get("test_env")
@@ -77,6 +78,10 @@ def run_validation(
         "min_wfe": min_wfe,
     }
 
+    best_fitness = -1.0
+    best_price_history = None
+    best_trade_signals = None
+
     for agent in pool.get_all():
         agent_result = _validate_agent(
             agent, test_env, walk_forward_windows, bootstrap_samples, confidence_level
@@ -85,6 +90,16 @@ def run_validation(
         # Check against thresholds
         passed = _check_thresholds(agent_result, thresholds)
         agent_result["passed"] = passed
+
+        # Track best agent's price history for dashboard
+        fitness = agent_result.get("fitness_score", 0)
+        if fitness > best_fitness:
+            best_fitness = fitness
+            best_price_history = agent_result.pop("_price_history", None)
+            best_trade_signals = agent_result.pop("_trade_signals", None)
+        else:
+            agent_result.pop("_price_history", None)
+            agent_result.pop("_trade_signals", None)
 
         results[agent.name] = agent_result
 
@@ -100,10 +115,17 @@ def run_validation(
     passed_agents = [n for n, r in results.items() if r.get("passed")]
     logger.info(f"Validation: {len(passed_agents)}/{len(results)} agents passed")
 
+    # Compute benchmark metrics from SPY data
+    benchmark_data = data_result.get("benchmark_data", {})
+    benchmark_result = _compute_benchmark(benchmark_data)
+
     return {
         "agent_results": results,
         "passed_agents": passed_agents,
         "thresholds": thresholds,
+        "price_history": best_price_history,
+        "trade_signals": best_trade_signals,
+        "benchmark": benchmark_result,
     }
 
 
@@ -125,14 +147,24 @@ def _validate_agent(
     total_steps = 0
     total_trades = 0
 
+    # Capture price history + trade signals from first episode of first window
+    price_history_raw = []  # [{step, close_prices, actions}]
+    capture_done = False
+
     episodes_per_window = max(5, 20 // num_windows)
 
     for window in range(num_windows):
         window_reward = 0.0
 
-        for _ in range(episodes_per_window):
-            obs, info = env.reset(seed=42 + window * 1000)
+        for ep_idx in range(episodes_per_window):
+            # Per-agent seed variation ensures even similar agents explore
+            # different state trajectories, making validation more robust
+            # and preventing identical metrics from near-identical weights.
+            agent_seed = 42 + window * 1000 + hash(agent.name) % 100
+            obs, info = env.reset(seed=agent_seed)
             episode_returns = []
+            # Capture first episode of first window
+            capturing = (window == 0 and ep_idx == 0 and not capture_done)
 
             while True:
                 action = agent.select_action(obs, deterministic=True)
@@ -147,12 +179,30 @@ def _validate_agent(
                     winning_steps += 1
                 total_steps += 1
 
+                # Record price and action for dashboard chart
+                if capturing:
+                    step_num = step_info.get("step", total_steps)
+                    # Get close prices from state builder if available
+                    try:
+                        close_prices = env.state_builder.get_current_prices(
+                            min(step_num, env.episode_bars - 1)
+                        ).tolist()
+                    except Exception:
+                        close_prices = []
+                    price_history_raw.append({
+                        "step": step_num,
+                        "close_prices": close_prices,
+                        "actions": action.tolist() if hasattr(action, 'tolist') else list(action),
+                    })
+
                 if terminated or truncated:
                     summary = step_info.get("episode_summary", {})
                     window_sharpes.append(summary.get("sharpe_ratio", 0.0))
                     window_returns.append(summary.get("total_return", 0.0))
                     # Use actual executed trade count from MarketSimulator
                     total_trades += step_info.get("num_trades", 0)
+                    if capturing:
+                        capture_done = True
                     break
 
     # Aggregate metrics
@@ -209,6 +259,23 @@ def _validate_agent(
     )
     fitness_score, fitness_breakdown = compute_fitness(agent_fitness)
 
+    # Downsample price history (every Nth bar to keep JSON small, target ~200 points)
+    downsample_n = max(1, len(price_history_raw) // 200)
+    price_history = price_history_raw[::downsample_n]
+
+    # Extract trade signals: steps where any action magnitude > 0.01
+    trade_signals = []
+    for entry in price_history:
+        actions = entry.get("actions", [])
+        for ticker_idx, act in enumerate(actions):
+            if abs(act) > 0.01:
+                trade_signals.append({
+                    "step": entry["step"],
+                    "ticker_idx": ticker_idx,
+                    "action": act,
+                    "type": "buy" if act > 0 else "sell",
+                })
+
     return {
         "sharpe": sharpe,
         "sharpe_ci_low": ci_low,
@@ -229,6 +296,9 @@ def _validate_agent(
         "total_steps": total_steps,
         "total_trades": total_trades,
         "consistency": consistency,
+        # Private fields — extracted by run_validation(), not stored per-agent
+        "_price_history": price_history,
+        "_trade_signals": trade_signals,
     }
 
 
@@ -265,3 +335,58 @@ def _compute_wfe(window_sharpes: list[float]) -> float:
     is_sharpe = float(np.mean(window_sharpes[:mid]))
     oos_sharpe = float(np.mean(window_sharpes[mid:]))
     return compute_wfe(oos_sharpe, is_sharpe)
+
+
+def _compute_benchmark(benchmark_data: dict) -> dict:
+    """Compute buy-and-hold metrics for SPY benchmark.
+
+    Returns a dict matching the agent validation format for side-by-side comparison.
+    """
+    if not benchmark_data or "close" not in benchmark_data:
+        return {
+            "ticker": "N/A",
+            "total_return": 0.0,
+            "sharpe": 0.0,
+            "max_drawdown": 0.0,
+            "equity_curve": [],
+        }
+
+    close = np.array(benchmark_data["close"], dtype=np.float32)
+    if len(close) < 2:
+        return {
+            "ticker": benchmark_data.get("ticker", "N/A"),
+            "total_return": 0.0,
+            "sharpe": 0.0,
+            "max_drawdown": 0.0,
+            "equity_curve": [],
+        }
+
+    # Buy-and-hold return
+    total_return = float((close[-1] / close[0]) - 1.0)
+
+    # Step returns
+    returns = np.diff(close) / close[:-1]
+
+    # Sharpe ratio (annualized, assuming 5-min bars: 78 bars/day, 252 days/year)
+    bars_per_year = 78 * 252
+    mean_ret = float(np.mean(returns))
+    std_ret = float(np.std(returns))
+    sharpe = (mean_ret / max(std_ret, 1e-8)) * np.sqrt(bars_per_year)
+
+    # Max drawdown
+    equity = close / close[0]  # Normalize to 1.0
+    running_max = np.maximum.accumulate(equity)
+    drawdowns = (equity - running_max) / np.maximum(running_max, 1e-8)
+    max_dd = float(-np.min(drawdowns))
+
+    # Downsample equity curve for dashboard (target ~200 points)
+    downsample_n = max(1, len(equity) // 200)
+    equity_curve = equity[::downsample_n].tolist()
+
+    return {
+        "ticker": benchmark_data.get("ticker", "SPY"),
+        "total_return": total_return,
+        "sharpe": sharpe,
+        "max_drawdown": max_dd,
+        "equity_curve": equity_curve,
+    }

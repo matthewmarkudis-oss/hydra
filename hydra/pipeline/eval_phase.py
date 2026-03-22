@@ -1,6 +1,7 @@
 """Phase 4: Evaluation — export RL signals and run VectorBT backtest validation.
 
-Uses IntradayBacktester from trading_agents for independent validation.
+Uses vectorbt.Portfolio.from_signals() for independent cross-validation of
+RL agent trading decisions with proper slippage and cost modelling.
 Backtesting only.
 """
 
@@ -48,10 +49,10 @@ def run_evaluation(
     # RL environment evaluation
     rl_results = _evaluate_in_env(pool, val_env, num_eval_episodes)
 
-    # VectorBT cross-validation (if available)
+    # VectorBT cross-validation — backtest top agents with independent sim
     vbt_results = {}
     if use_vectorbt:
-        vbt_results = _evaluate_vectorbt(pool, val_env)
+        vbt_results = _evaluate_vectorbt(pool, val_env, rl_results)
 
     return {
         "rl_eval": rl_results,
@@ -106,17 +107,167 @@ def _evaluate_in_env(
     return results
 
 
-def _evaluate_vectorbt(pool: AgentPool, env: TradingEnv) -> dict[str, Any]:
-    """Cross-validate with VectorBT IntradayBacktester."""
+def _evaluate_vectorbt(
+    pool: AgentPool,
+    env: TradingEnv,
+    rl_results: dict[str, dict[str, float]],
+    top_n: int = 5,
+    num_episodes: int = 5,
+    threshold: float = 0.3,
+) -> dict[str, Any]:
+    """Cross-validate top agents with VectorBT portfolio simulation.
+
+    Runs each agent through the env, converts continuous actions to
+    entry/exit boolean signals, and feeds them to vbt.Portfolio.from_signals()
+    for an independent PnL calculation with slippage + fees.
+
+    Args:
+        pool: Agent pool with trained agents.
+        env: Validation TradingEnv.
+        rl_results: RL eval results (used to rank agents for top-N selection).
+        top_n: Number of top agents to backtest.
+        num_episodes: Episodes per agent for VBT evaluation.
+        threshold: Action threshold for BUY (>thresh) / SELL (<-thresh).
+    """
     try:
-        from trading_agents.backtesting.intraday_backtester import IntradayBacktester
-        logger.info("VectorBT validation available")
-        # Integration point: export RL signals → VectorBT format
-        # This requires converting agent actions to entry/exit signals
-        return {"status": "available", "note": "VectorBT integration ready"}
+        import vectorbt as vbt  # noqa: F401
     except ImportError:
         logger.info("VectorBT not available, skipping cross-validation")
         return {"status": "unavailable"}
+
+    # Select top agents by RL mean reward
+    ranked = sorted(
+        rl_results.items(),
+        key=lambda x: x[1].get("mean_reward", 0),
+        reverse=True,
+    )
+    top_names = [name for name, _ in ranked[:top_n]]
+    logger.info(f"VectorBT cross-validation: {len(top_names)} agents, {num_episodes} episodes each")
+
+    agent_results = {}
+    for name in top_names:
+        agent = pool.get(name)
+        if agent is None:
+            continue
+        try:
+            result = _vbt_backtest_agent(agent, env, num_episodes, threshold)
+            agent_results[name] = result
+            logger.info(
+                f"  VBT {name}: return={result['vbt_return_pct']:.2f}%, "
+                f"sharpe={result['vbt_sharpe']:.3f}, "
+                f"trades={result['vbt_total_trades']}, "
+                f"dd={result['vbt_max_dd_pct']:.2f}%"
+            )
+        except Exception as e:
+            logger.warning(f"  VBT backtest failed for '{name}': {e}")
+
+    return {"status": "available", "agent_results": agent_results}
+
+
+def _vbt_backtest_agent(
+    agent,
+    env: TradingEnv,
+    num_episodes: int = 5,
+    threshold: float = 0.3,
+) -> dict[str, float]:
+    """Run one agent through the env, convert actions to VBT portfolio sim.
+
+    Collects close prices + actions at each step across multiple episodes,
+    then runs vbt.Portfolio.from_signals() per ticker and aggregates results.
+
+    Returns dict with vbt_return_pct, vbt_sharpe, vbt_max_dd_pct, vbt_total_trades.
+    """
+    import pandas as pd
+    import vectorbt as vbt
+
+    per_ticker_results: list[dict] = []
+
+    for ep in range(num_episodes):
+        obs, info = env.reset()
+        tickers = info.get("tickers", [])
+        actions_list: list[np.ndarray] = []
+        closes_list: list[np.ndarray] = []
+        step = 0
+
+        while True:
+            action = agent.select_action(obs, deterministic=True)
+            obs, reward, terminated, truncated, step_info = env.step(action)
+            actions_list.append(action.copy())
+            closes_list.append(
+                env.state_builder.get_current_prices(
+                    min(step, env.episode_bars - 1)
+                ).copy()
+            )
+            step += 1
+            if terminated or truncated:
+                break
+
+        if not actions_list:
+            continue
+
+        actions_arr = np.array(actions_list)   # (steps, num_stocks)
+        closes_arr = np.array(closes_list)     # (steps, num_stocks)
+
+        for i, ticker in enumerate(tickers):
+            if i >= actions_arr.shape[1]:
+                break
+
+            close = pd.Series(closes_arr[:, i], dtype=np.float64)
+            entries = pd.Series(actions_arr[:, i] > threshold)
+            exits = pd.Series(actions_arr[:, i] < -threshold)
+
+            if entries.sum() == 0:
+                continue
+
+            try:
+                pf = vbt.Portfolio.from_signals(
+                    close,
+                    entries,
+                    exits,
+                    init_cash=10_000.0,
+                    fees=0.0005,       # 5 bps — matches env transaction cost
+                    slippage=0.001,    # 10 bps — matches env slippage
+                )
+
+                total_return = float(pf.total_return()) * 100
+                try:
+                    max_dd = abs(float(pf.max_drawdown())) * 100
+                    max_dd = max_dd if np.isfinite(max_dd) else 0.0
+                except Exception:
+                    max_dd = 0.0
+                try:
+                    trade_count = int(pf.trades.count())
+                except Exception:
+                    trade_count = 0
+
+                per_ticker_results.append({
+                    "ticker": ticker,
+                    "episode": ep,
+                    "total_return_pct": total_return,
+                    "max_drawdown_pct": max_dd,
+                    "total_trades": trade_count,
+                })
+            except Exception as e:
+                logger.debug(f"VBT sim failed for {ticker} ep{ep}: {e}")
+
+    # Aggregate across episodes + tickers
+    if not per_ticker_results:
+        return {
+            "vbt_return_pct": 0.0,
+            "vbt_sharpe": 0.0,
+            "vbt_max_dd_pct": 0.0,
+            "vbt_total_trades": 0,
+        }
+
+    returns = [r["total_return_pct"] for r in per_ticker_results]
+    std_ret = float(np.std(returns)) if len(returns) > 1 else 1e-8
+
+    return {
+        "vbt_return_pct": float(np.mean(returns)),
+        "vbt_sharpe": float(np.mean(returns)) / max(std_ret, 1e-8),
+        "vbt_max_dd_pct": float(np.max([r["max_drawdown_pct"] for r in per_ticker_results])),
+        "vbt_total_trades": sum(r["total_trades"] for r in per_ticker_results),
+    }
 
 
 def export_signals(

@@ -30,6 +30,36 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add TradingAgents parent so `import trading_agents` works
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+SECTOR_ETFS = "XLK,XLF,XLE,XLV,XLI,XLU,XLP,XLY,XLB,XLRE"
+
+
+def _load_alpaca_config() -> dict | None:
+    """Load Alpaca credentials from trading_agents/.env."""
+    env_path = Path(__file__).parent.parent.parent / "trading_agents" / ".env"
+    if not env_path.exists():
+        return None
+
+    config = {}
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip()
+            if key == "ALPACA_API_KEY" and value:
+                config["api_key"] = value
+            elif key == "ALPACA_SECRET_KEY" and value:
+                config["secret_key"] = value
+            elif key == "ALPACA_BASE_URL" and value:
+                config["base_url"] = value
+
+    if "api_key" in config and "secret_key" in config:
+        return config
+    return None
 
 
 @dataclass
@@ -79,6 +109,9 @@ def run_single_seed(
     episodes: int,
     log_level: str = "INFO",
     tensorboard_base: str = "logs/tensorboard",
+    alpaca_config: dict | None = None,
+    use_real_data: bool = False,
+    tickers: list[str] | None = None,
 ) -> SeedRun:
     """Run a single training pipeline with the given seed."""
     from hydra.config.schema import HydraConfig
@@ -100,7 +133,15 @@ def run_single_seed(
         config.training.num_generations = generations
         config.training.episodes_per_generation = episodes
 
-        orchestrator = PipelineOrchestrator(config)
+        if tickers:
+            config.data.tickers = tickers
+            config.env.num_stocks = len(tickers)
+
+        orchestrator = PipelineOrchestrator(
+            config,
+            alpaca_config=alpaca_config,
+            use_real_data=use_real_data,
+        )
 
         start = time.time()
         orchestrator.run()
@@ -244,7 +285,29 @@ def main():
         "--output", type=str, default="logs/curriculum_results.json",
         help="Path to save results JSON"
     )
+    parser.add_argument(
+        "--real-data", action="store_true",
+        help="Use real Alpaca market data instead of synthetic"
+    )
+    parser.add_argument(
+        "--tickers", type=str, default=None,
+        help=f"Comma-separated tickers (default: {SECTOR_ETFS})"
+    )
     args = parser.parse_args()
+
+    # Real data setup
+    alpaca_config = None
+    use_real_data = args.real_data
+    tickers_list = None
+    if use_real_data:
+        alpaca_config = _load_alpaca_config()
+        if alpaca_config is None:
+            print("ERROR: --real-data requires Alpaca credentials in trading_agents/.env")
+            sys.exit(1)
+        tickers_list = [t.strip() for t in (args.tickers or SECTOR_ETFS).split(",")]
+        print(f"Using REAL Alpaca data for {len(tickers_list)} tickers: {', '.join(tickers_list)}")
+    elif args.tickers:
+        tickers_list = [t.strip() for t in args.tickers.split(",")]
 
     curriculum = CurriculumConfig()
     all_runs: list[SeedRun] = []
@@ -268,6 +331,9 @@ def main():
                 generations=gens,
                 episodes=eps,
                 log_level=args.log_level,
+                alpaca_config=alpaca_config,
+                use_real_data=use_real_data,
+                tickers=tickers_list,
             )
             all_runs.append(run)
             print_seed_result(run)
@@ -306,6 +372,9 @@ def main():
                     generations=gens,
                     episodes=eps,
                     log_level=args.log_level,
+                    alpaca_config=alpaca_config,
+                    use_real_data=use_real_data,
+                    tickers=tickers_list,
                 )
                 all_runs.append(run)
                 print_seed_result(run)

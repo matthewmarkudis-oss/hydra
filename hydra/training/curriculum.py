@@ -32,6 +32,7 @@ class Curriculum:
         self._current_exploration = 1.0
         self._phase = "warmup"
         self._generation = 0
+        self._regime = "risk_on"
 
     def on_generation(self, generation: int, eval_scores: dict[str, float]) -> dict[str, Any]:
         """Update curriculum state after a generation.
@@ -62,6 +63,7 @@ class Curriculum:
 
         adjustments["phase"] = self._phase
         adjustments["exploration_rate"] = self._current_exploration
+        adjustments["regime"] = self._regime
 
         logger.info(
             f"Curriculum gen {generation}: phase={self._phase}, "
@@ -77,6 +79,23 @@ class Curriculum:
     @property
     def exploration_rate(self) -> float:
         return self._current_exploration
+
+    @property
+    def regime(self) -> str:
+        return self._regime
+
+    def set_regime(self, regime: str) -> None:
+        """Set the market regime for regime-conditional rewards.
+
+        Invalid regimes are rejected and the regime resets to ``risk_on``.
+        """
+        valid = ("risk_on", "risk_off", "crisis")
+        if regime in valid:
+            self._regime = regime
+            logger.info(f"Curriculum regime set to: {regime}")
+        else:
+            self._regime = "risk_on"
+            logger.warning(f"Invalid regime '{regime}', reset to 'risk_on'")
 
     def get_pool_schedule(self, generation: int) -> dict[str, int]:
         """Get target pool composition for a generation.

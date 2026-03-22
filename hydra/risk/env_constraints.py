@@ -8,6 +8,35 @@ from __future__ import annotations
 
 import numpy as np
 
+try:
+    import numba
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+
+
+def _clip_actions_python(actions, holdings, prices, pv, max_pos_pct):
+    """Pure-Python fallback for clip_actions inner loop."""
+    clipped = actions.copy()
+    max_value = pv * max_pos_pct
+    for i in range(len(actions)):
+        if actions[i] > 0:
+            current_value = holdings[i] * prices[i]
+            headroom = max_value - current_value
+            if headroom <= 0:
+                clipped[i] = 0.0
+            else:
+                max_buy_frac = headroom / pv
+                if actions[i] > max_buy_frac:
+                    clipped[i] = max_buy_frac
+    return clipped
+
+
+if _HAS_NUMBA:
+    _clip_actions_fast = numba.njit(cache=True)(_clip_actions_python)
+else:
+    _clip_actions_fast = _clip_actions_python
+
 
 class EnvConstraints:
     """Risk constraints applied within env.step().
@@ -63,24 +92,14 @@ class EnvConstraints:
             # If halted, only allow sells (negative actions) to reduce risk
             return np.minimum(actions, np.float32(0.0))
 
-        clipped = actions.copy()
-        pv = max(portfolio_value, 1e-8)
-        max_value = np.float32(pv * self.max_position_pct)
-
-        for i in range(len(actions)):
-            current_value = holdings[i] * prices[i]
-
-            if actions[i] > 0:
-                # Buying — check if it would exceed max position
-                headroom = max_value - current_value
-                if headroom <= 0:
-                    clipped[i] = 0.0  # Already at max, can't buy more
-                else:
-                    # Scale down buy action if needed
-                    max_buy_frac = headroom / pv
-                    clipped[i] = min(actions[i], max_buy_frac)
-
-        return clipped
+        pv = np.float64(max(portfolio_value, 1e-8))
+        return _clip_actions_fast(
+            actions.astype(np.float64),
+            holdings.astype(np.float64),
+            prices.astype(np.float64),
+            pv,
+            float(self.max_position_pct),
+        ).astype(np.float32)
 
     def check_constraints(
         self,

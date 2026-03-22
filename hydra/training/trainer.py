@@ -103,12 +103,14 @@ class Trainer:
         }
 
     def _train_one_episode(self, deterministic: bool = False) -> tuple[float, dict]:
-        """Run one training episode."""
+        """Run one training episode.
+
+        Learning agents train via SB3's .learn() in a separate phase
+        (train_on_env), not from transitions stored here.  This loop
+        only collects multi-agent eval metrics.
+        """
         obs, info = self.multi_env.reset()
         total_reward = 0.0
-        episode_transitions: dict[str, list[dict]] = {
-            a.name: [] for a in self.pool.get_learning_agents()
-        }
 
         while True:
             # Collect individual actions
@@ -123,39 +125,15 @@ class Trainer:
                 external_actions=per_agent_actions
             )
 
-            done = terminated or truncated
             total_reward += reward
             self._global_step += 1
 
-            # Store transitions for learning agents
-            for agent in self.pool.get_learning_agents():
-                episode_transitions[agent.name].append({
-                    "obs": obs.copy(),
-                    "action": per_agent_actions[agent.name].copy(),
-                    "reward": reward,
-                    "next_obs": next_obs.copy(),
-                    "done": done,
-                })
-
-            if done:
+            if terminated or truncated:
                 break
 
             obs = next_obs
 
-        # Update learning agents
-        update_metrics = {}
-        for agent in self.pool.get_learning_agents():
-            transitions = episode_transitions[agent.name]
-            if hasattr(agent, "store_transition"):
-                for t in transitions:
-                    agent.store_transition(
-                        t["obs"], t["action"], t["reward"], t["next_obs"], t["done"]
-                    )
-            metrics = agent.update()
-            update_metrics[agent.name] = metrics
-
         summary = step_info.get("episode_summary", {})
-        summary["update_metrics"] = update_metrics
         summary["num_trades"] = step_info.get("num_trades", 0)
         summary["total_transaction_costs"] = step_info.get("total_transaction_costs", 0.0)
         return total_reward, summary

@@ -20,7 +20,7 @@ class MarketSimulator:
     def __init__(
         self,
         num_stocks: int,
-        initial_cash: float = 100_000.0,
+        initial_cash: float = 2_500.0,
         transaction_cost_bps: float = 5.0,
         slippage_bps: float = 10.0,
         spread_bps: float = 2.0,

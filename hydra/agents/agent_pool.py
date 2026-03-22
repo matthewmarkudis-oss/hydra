@@ -182,10 +182,22 @@ class AgentPool:
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
 
+        # Determine obs/action dims from first agent for feature_config
+        first_agent = next(iter(self._agents.values()), None)
+        feature_config = {}
+        if first_agent:
+            feature_config = {
+                "num_tickers": first_agent.action_dim,
+                "obs_dim": first_agent.obs_dim,
+                "action_dim": first_agent.action_dim,
+                "obs_layout": "17N+5",
+            }
+
         metadata = {
             "agents": {},
             "weights": self._weights,
             "rankings": self._rankings,
+            "feature_config": feature_config,
         }
 
         for name, agent in self._agents.items():

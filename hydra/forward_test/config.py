@@ -13,7 +13,7 @@ class ForwardTestConfig(BaseModel):
         description="Must be explicitly enabled by CEO. Disabled by default.",
     )
     duration_days: int = Field(
-        default=20,
+        default=60,
         ge=1,
         le=90,
         description="Number of trading days to run forward test.",
@@ -56,4 +56,14 @@ class ForwardTestConfig(BaseModel):
         default=5,
         ge=1,
         description="Bar polling interval in minutes.",
+    )
+    alert_webhook_url: str = Field(
+        default="",
+        description="Discord/Slack webhook URL for forward-test alerts. Empty = disabled.",
+    )
+    alert_daily_loss_pct: float = Field(
+        default=0.03,
+        ge=0,
+        le=1.0,
+        description="Daily loss threshold that triggers an alert.",
     )

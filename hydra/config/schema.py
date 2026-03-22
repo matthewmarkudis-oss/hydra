@@ -18,7 +18,7 @@ class EnvConfig(BaseModel):
     transaction_cost_bps: float = Field(default=5.0, ge=0, description="Transaction cost in basis points")
     slippage_bps: float = Field(default=2.0, ge=0, description="Slippage in basis points")
     spread_bps: float = Field(default=1.0, ge=0, description="Bid-ask spread in basis points")
-    max_position_pct: float = Field(default=0.30, gt=0, le=1.0)
+    max_position_pct: float = Field(default=0.15, gt=0, le=1.0)
     max_drawdown_pct: float = Field(default=0.20, gt=0, le=1.0)
     max_daily_loss_pct: float = Field(default=0.05, gt=0, le=1.0)
     normalize_obs: bool = Field(default=True)
@@ -121,7 +121,7 @@ class ForwardTestConfig(BaseModel):
     """Forward-testing graduation pipeline configuration."""
 
     enabled: bool = Field(default=False, description="Must be explicitly enabled by CEO")
-    duration_days: int = Field(default=20, ge=1, le=90)
+    duration_days: int = Field(default=60, ge=1, le=90)
     max_agents: int = Field(default=3, ge=1, le=10)
     initial_capital: float = Field(default=10000.0, gt=0)
     max_position_pct: float = Field(default=0.20, gt=0, le=0.50)
@@ -129,6 +129,8 @@ class ForwardTestConfig(BaseModel):
     drawdown_tolerance: float = Field(default=1.5, ge=1.0)
     win_rate_tolerance: float = Field(default=0.80, ge=0, le=1.0)
     poll_interval_minutes: int = Field(default=5, ge=1)
+    alert_webhook_url: str = Field(default="", description="Webhook URL for alerts")
+    alert_daily_loss_pct: float = Field(default=0.03, ge=0, le=1.0)
 
 
 class HydraConfig(BaseModel):

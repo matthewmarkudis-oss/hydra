@@ -79,6 +79,34 @@ class ForwardTestTracker:
         }
         self._append_log(entry)
 
+    def record_fill(
+        self,
+        timestamp: str,
+        agent_name: str,
+        ticker: str,
+        side: str,
+        qty: int,
+        expected_price: float,
+        fill_price: float,
+        slippage_bps: float,
+        commission: float = 0.0,
+    ) -> None:
+        """Record an order fill with slippage data."""
+        entry = {
+            "type": "fill",
+            "timestamp": timestamp,
+            "agent": agent_name,
+            "ticker": ticker,
+            "side": side,
+            "qty": qty,
+            "expected_price": round(expected_price, 4),
+            "fill_price": round(fill_price, 4),
+            "slippage_bps": round(slippage_bps, 2),
+            "commission": round(commission, 4),
+            "logged_at": datetime.now().isoformat(),
+        }
+        self._append_log(entry)
+
     def record_event(self, event_type: str, detail: dict) -> None:
         """Record a lifecycle event (start, stop, error, etc)."""
         entry = {
@@ -195,6 +223,32 @@ class ForwardTestTracker:
             "initial_value": round(initial, 2),
             "final_value": round(final, 2),
             "bars_recorded": len(bars),
+        }
+
+    def get_slippage_stats(self) -> dict[str, Any]:
+        """Compute slippage statistics across all recorded fills."""
+        fills = [e for e in self._read_log() if e.get("type") == "fill"]
+        if not fills:
+            return {}
+
+        slippages = [f["slippage_bps"] for f in fills]
+        slippages.sort()
+        n = len(slippages)
+
+        mean_slip = statistics.mean(slippages)
+        median_slip = statistics.median(slippages)
+        p95_idx = min(int(n * 0.95), n - 1)
+        p95_slip = slippages[p95_idx]
+        max_slip = slippages[-1]
+
+        return {
+            "total_fills": n,
+            "mean_slippage_bps": round(mean_slip, 2),
+            "median_slippage_bps": round(median_slip, 2),
+            "p95_slippage_bps": round(p95_slip, 2),
+            "max_slippage_bps": round(max_slip, 2),
+            "training_assumption_bps": 12.0,  # 10 slippage + 2 spread
+            "excess_slippage_bps": round(mean_slip - 12.0, 2),
         }
 
     # ── Comparison to Backtest ─────────────────────────────────────────────

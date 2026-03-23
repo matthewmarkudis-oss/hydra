@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from hydra.agents.agent_pool import AgentPool
+from hydra.agents.cmaes_agent import CMAESAgent
 from hydra.agents.ppo_agent import PPOAgent
-from hydra.agents.sac_agent import SACAgent
 from hydra.agents.td3_agent import TD3Agent
 from hydra.agents.recurrent_ppo_agent import RecurrentPPOAgent
 from hydra.agents.rule_based_agent import RuleBasedAgent
@@ -209,6 +209,9 @@ def _build_fresh_pool(obs_dim: int, action_dim: int) -> AgentPool:
     pool.add(TD3Agent("td3_1", obs_dim, action_dim, net_arch=net_arch, prefer_gpu=False))
     pool.add(RecurrentPPOAgent("rppo_1", obs_dim, action_dim, prefer_gpu=False))
 
+    # CMA-ES — gradient-free evolutionary agent, immune to reward non-stationarity
+    pool.add(CMAESAgent("cmaes_1", obs_dim, action_dim))
+
     # Rule-based agents
     pool.add(RuleBasedAgent(
         "alpha_rule", obs_dim, action_dim,
@@ -217,6 +220,10 @@ def _build_fresh_pool(obs_dim: int, action_dim: int) -> AgentPool:
     pool.add(RuleBasedAgent(
         "beta_rule", obs_dim, action_dim,
         agent_class_path="beta_mean_reversion.BetaMeanReversion",
+    ))
+    pool.add(RuleBasedAgent(
+        "theta_rule", obs_dim, action_dim,
+        agent_class_path="theta.ThetaAgent",
     ))
 
     return pool
@@ -381,16 +388,18 @@ def _try_warm_start(
             return None
 
     # Load learning agents only — force CPU to avoid DirectML load issues.
-    # SAC is replaced by TD3 (SAC consistently gets benched by CHIMERA).
+    # SAC is replaced by CMA-ES (SAC's entropy tuning is incompatible with
+    # non-stationary rewards from auto reward tuning).
     learning_constructors = {
         "PPOAgent": lambda n, o, a: PPOAgent(n, o, a, prefer_gpu=False),
         "TD3Agent": lambda n, o, a: TD3Agent(n, o, a, prefer_gpu=False),
         "RecurrentPPOAgent": lambda n, o, a: RecurrentPPOAgent(n, o, a, prefer_gpu=False),
+        "CMAESAgent": lambda n, o, a: CMAESAgent(n, o, a),
     }
 
-    # When warm-starting from an old run that had SAC, replace it with TD3
+    # When warm-starting from an old run that had SAC, replace with CMA-ES
     _AGENT_REPLACEMENTS = {
-        "SACAgent": ("TD3Agent", "td3_1"),
+        "SACAgent": ("CMAESAgent", "cmaes_1"),
     }
 
     pool = AgentPool()

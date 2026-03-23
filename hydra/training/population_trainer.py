@@ -24,6 +24,7 @@ from hydra.envs.trading_env import TradingEnv
 from hydra.evaluation.competition import AgentCompetitionScore, CompetitionRebalancer
 from hydra.evaluation.conviction import ConvictionCalibrator
 from hydra.evolution.diagnostics import DiagnosticEngine, GenerationMetrics
+from hydra.agents.td3_agent import TD3Agent
 from hydra.training.curriculum import Curriculum
 from hydra.training.metrics_tracker import MetricsTracker
 from hydra.training.trainer import Trainer
@@ -168,6 +169,12 @@ class PopulationTrainer:
                                 if hasattr(sub_env, "reward_fn"):
                                     sub_env.reward_fn.update_params(new_params)
                         logger.info(f"  Reward params auto-tuned at gen {self._generation}")
+                        # Flush off-policy replay buffers so agents don't
+                        # train on experiences scored under the old reward.
+                        for agent in self.pool.agents:
+                            if isinstance(agent, TD3Agent) and agent._model is not None:
+                                agent._model.replay_buffer.reset()
+                                logger.info(f"  Flushed replay buffer for {agent.name}")
                 except Exception as e:
                     logger.warning(f"Auto reward tuning failed: {e}")
 
@@ -245,15 +252,20 @@ class PopulationTrainer:
 
             generation_results.append(gen_result)
 
+            best_agent_name = max(eval_scores, key=eval_scores.get) if eval_scores else "N/A"
+            best_agent_score = max(eval_scores.values()) if eval_scores else 0.0
+
             self.metrics.log_generation(self._generation, {
                 "train_mean_reward": train_result["mean_reward"],
                 "pool_size": float(self.pool.size),
-                "best_eval_score": max(eval_scores.values()) if eval_scores else 0.0,
+                "best_eval_score": best_agent_score,
+                "best_agent": best_agent_name,
             })
 
             logger.info(
-                f"Gen {self._generation}: promoted={promoted}, demoted={demoted}, "
-                f"pool_size={self.pool.size}"
+                f"Gen {self._generation}: best={best_agent_name} "
+                f"(Sharpe={best_agent_score:.3f}), promoted={promoted}, "
+                f"demoted={demoted}, pool_size={self.pool.size}"
             )
 
             # Fire generation callback (used for live dashboard updates)

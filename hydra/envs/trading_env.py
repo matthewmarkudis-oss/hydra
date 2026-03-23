@@ -59,6 +59,7 @@ class TradingEnv(gym.Env):
         augment: bool = False,
         seed: int | None = None,
         render_mode: str | None = None,
+        signal_provider=None,
     ):
         super().__init__()
 
@@ -68,6 +69,7 @@ class TradingEnv(gym.Env):
         self.render_mode = render_mode
         self._seed = seed
         self._augment = augment
+        self._signal_provider = signal_provider
 
         # Store constructor kwargs for creating vectorized copies
         self._init_kwargs = {
@@ -90,6 +92,7 @@ class TradingEnv(gym.Env):
             "dead_zone": dead_zone,
             "normalize_obs": normalize_obs,
             "augment": augment,
+            "signal_provider": signal_provider,
         }
 
         # Components
@@ -126,6 +129,7 @@ class TradingEnv(gym.Env):
             num_stocks=num_stocks,
             episode_bars=episode_bars,
             normalize=normalize_obs,
+            signal_provider=signal_provider,
         )
 
         self.session_manager = SessionManager(bar_interval_minutes=5)
@@ -220,12 +224,27 @@ class TradingEnv(gym.Env):
             min(self._step_count, self.episode_bars - 1)
         )
 
+        # Get veto mask from signal provider (ZETA fundamental veto)
+        veto_mask = None
+        if self._signal_provider is not None:
+            try:
+                step_idx = min(self._step_count, self.episode_bars - 1)
+                signals = self._signal_provider(step_idx)
+                # Index 5 = zeta_veto_active (1 = veto is ON = block buys)
+                if len(signals) > 5 and signals[5] > 0.5:
+                    veto_mask = np.ones(self.num_stocks, dtype=np.float32)
+                    # Veto blocks positive (buy) actions; sells still allowed
+                    veto_mask[:] = -1.0  # Sentinel: only block buys
+            except Exception:
+                pass
+
         # Process actions through constraint system
         processed_actions = self.action_processor.process(
             raw_actions=action,
             holdings=self.simulator.holdings,
             prices=prices,
             portfolio_value=self.simulator.get_portfolio_value(prices),
+            veto_mask=veto_mask,
         )
 
         # Execute orders

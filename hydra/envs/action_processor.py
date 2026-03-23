@@ -38,6 +38,7 @@ class ActionProcessor:
         holdings: np.ndarray,
         prices: np.ndarray,
         portfolio_value: float,
+        veto_mask: np.ndarray | None = None,
     ) -> np.ndarray:
         """Process raw actions into clipped order fractions.
 
@@ -46,6 +47,9 @@ class ActionProcessor:
             holdings: Current share holdings per stock.
             prices: Current prices per stock.
             portfolio_value: Current total portfolio value.
+            veto_mask: Optional mask from ZETA fundamentals. When provided
+                       (sentinel value -1.0), positive (buy) actions are
+                       zeroed out while sell actions are preserved.
 
         Returns:
             Processed action fractions, shape (num_stocks,), values in [-1, 1].
@@ -70,6 +74,11 @@ class ActionProcessor:
             weak = (np.abs(actions) > 0) & (np.abs(actions) < self.min_action)
             if np.any(weak):
                 actions[weak] = np.sign(actions[weak]) * self.min_action
+
+        # Apply ZETA veto — block buy actions when fundamentals are poor
+        if veto_mask is not None:
+            buy_mask = actions > 0
+            actions[buy_mask] = 0.0
 
         # Apply risk constraints (position size limits)
         actions = self.constraints.clip_actions(actions, holdings, prices, portfolio_value)

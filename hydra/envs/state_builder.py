@@ -7,7 +7,14 @@ data at episode start for O(1) per-step observation construction.
 
 from __future__ import annotations
 
+from typing import Callable
+
 import numpy as np
+
+# Number of extra features from trading agent signal providers
+# (GAMMA regime, GAMMA sector, DELTA sentiment, DELTA vix-dampened,
+#  ZETA quality, ZETA veto)
+NUM_SIGNAL_FEATURES = 6
 
 
 class StateBuilder:
@@ -39,15 +46,29 @@ class StateBuilder:
         [17N+2]        daily_pnl           (today's P&L as fraction of initial)
         [17N+3]        session_label       (session type / 6.0, normalized to ~[0, 1])
         [17N+4]        time_progress       (bar_index / total_bars, [0, 1])
+        --- Trading agent signal features (optional, zeros when unavailable) ---
+        [17N+5]        gamma_regime_score  (GAMMA macro regime, [-1, 1])
+        [17N+6]        gamma_sector_bias   (GAMMA sector rotation, [-1, 1])
+        [17N+7]        delta_sentiment     (DELTA recency-weighted sentiment, [-1, 1])
+        [17N+8]        delta_vix_dampened  (DELTA VIX-adjusted sentiment, [-1, 1])
+        [17N+9]        zeta_quality_score  (ZETA fundamental quality, [-1, 1])
+        [17N+10]       zeta_veto_active    (ZETA veto flag, 0 or 1)
 
-    Total dims = 1 + 17*N + 4 = 17*N + 5
+    Total dims = 1 + 17*N + 4 + 6 = 17*N + 11
     """
 
-    def __init__(self, num_stocks: int, episode_bars: int = 78, normalize: bool = True):
+    def __init__(
+        self,
+        num_stocks: int,
+        episode_bars: int = 78,
+        normalize: bool = True,
+        signal_provider: Callable[[int], np.ndarray] | None = None,
+    ):
         self.num_stocks = num_stocks
         self.episode_bars = episode_bars
         self.normalize = normalize
-        self.obs_dim = 17 * num_stocks + 5
+        self._signal_provider = signal_provider
+        self.obs_dim = 17 * num_stocks + 5 + NUM_SIGNAL_FEATURES
 
         # Pre-computed episode data (set at episode start)
         self._close_matrix: np.ndarray | None = None  # (bars, stocks)
@@ -240,6 +261,17 @@ class StateBuilder:
         obs[idx + 1] = np.float32((portfolio_value - initial_cash) / max(initial_cash, 1e-8))
         obs[idx + 2] = np.float32(self._session_labels[step]) / np.float32(6.0)
         obs[idx + 3] = np.float32(step) / np.float32(max(self.episode_bars - 1, 1))
+
+        # Trading agent signal features
+        sig_idx = idx + 4
+        if self._signal_provider is not None:
+            try:
+                signals = self._signal_provider(step)
+                obs[sig_idx:sig_idx + NUM_SIGNAL_FEATURES] = signals[:NUM_SIGNAL_FEATURES]
+            except Exception:
+                obs[sig_idx:sig_idx + NUM_SIGNAL_FEATURES] = 0.0
+        else:
+            obs[sig_idx:sig_idx + NUM_SIGNAL_FEATURES] = 0.0
 
         return obs
 

@@ -61,6 +61,9 @@ class RuleBasedAgent(BaseRLAgent):
                     config=self._config,
                     data_providers=self._config.get("data_providers", {}),
                 )
+            elif "theta" in self._agent_class_path.lower():
+                from trading_agents.agents.theta import ThetaAgent
+                self._wrapped_agent = ThetaAgent(api_client=None)
             else:
                 logger.warning(f"Unknown agent class: {self._agent_class_path}")
         except ImportError as e:
@@ -84,10 +87,14 @@ class RuleBasedAgent(BaseRLAgent):
         return self._action_from_observation(observation)
 
     def _action_from_wrapped_agent(self) -> np.ndarray:
-        """Get actions by running the wrapped agent's analyze()."""
+        """Get actions by running the wrapped agent's analyze() or generate_signal()."""
         actions = np.zeros(self.action_dim, dtype=np.float32)
 
         try:
+            # THETA uses generate_signal() → regime-based defensive actions
+            if hasattr(self._wrapped_agent, "generate_signal"):
+                return self._action_from_theta()
+
             from trading_agents.agents.base_agent import MarketContext
             context = MarketContext()
 
@@ -103,6 +110,34 @@ class RuleBasedAgent(BaseRLAgent):
                         actions[idx] = np.float32(-0.5 * signal.conviction)
         except Exception as e:
             logger.debug(f"Wrapped agent analyze failed: {e}")
+
+        return np.clip(actions, -1.0, 1.0)
+
+    def _action_from_theta(self) -> np.ndarray:
+        """Map THETA's fragility regime to defensive portfolio actions.
+
+        CRITICAL  → full sell (-1.0 all positions)
+        HIGH_RISK → partial sell (-0.5)
+        ELEVATED  → mild reduction (scaled by fragility)
+        CALM      → hold (0.0, let other agents decide)
+        """
+        actions = np.zeros(self.action_dim, dtype=np.float32)
+
+        try:
+            signal = self._wrapped_agent.generate_signal()
+            meta = signal.metadata or {}
+            regime = meta.get("regime", "CALM")
+            fragility = meta.get("fragility_score", 0.0)
+
+            if regime == "CRITICAL":
+                actions[:] = -1.0
+            elif regime == "HIGH_RISK":
+                actions[:] = -0.5
+            elif regime == "ELEVATED":
+                actions[:] = np.float32(-fragility / 200.0)
+            # CALM → all zeros (hold)
+        except Exception as e:
+            logger.debug(f"THETA generate_signal failed: {e}")
 
         return np.clip(actions, -1.0, 1.0)
 

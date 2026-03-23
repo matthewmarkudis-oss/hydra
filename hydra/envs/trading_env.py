@@ -49,17 +49,22 @@ class TradingEnv(gym.Env):
         max_drawdown_pct: float = 0.20,
         max_daily_loss_pct: float = 0.05,
         sharpe_eta: float = 0.05,
-        drawdown_penalty: float = 0.5,
-        transaction_penalty: float = 0.1,
-        holding_penalty: float = 0.1,
-        pnl_bonus_weight: float = 1.0,
+        drawdown_penalty: float = 0.15,
+        transaction_penalty: float = 0.01,
+        holding_penalty: float = 0.02,
+        pnl_bonus_weight: float = 5.0,
         reward_scale: float = 100.0,
+        cash_drag_penalty: float = 0.3,
+        benchmark_bonus_weight: float = 2.0,
+        min_deployment_pct: float = 0.3,
         dead_zone: float = 0.0,
         normalize_obs: bool = True,
         augment: bool = False,
         seed: int | None = None,
         render_mode: str | None = None,
         signal_provider=None,
+        benchmark_returns: np.ndarray | None = None,
+        bar_interval_minutes: int = 5,
     ):
         super().__init__()
 
@@ -70,6 +75,8 @@ class TradingEnv(gym.Env):
         self._seed = seed
         self._augment = augment
         self._signal_provider = signal_provider
+        self._benchmark_returns = benchmark_returns
+        self._bar_interval_minutes = bar_interval_minutes
 
         # Store constructor kwargs for creating vectorized copies
         self._init_kwargs = {
@@ -89,10 +96,15 @@ class TradingEnv(gym.Env):
             "holding_penalty": holding_penalty,
             "pnl_bonus_weight": pnl_bonus_weight,
             "reward_scale": reward_scale,
+            "cash_drag_penalty": cash_drag_penalty,
+            "benchmark_bonus_weight": benchmark_bonus_weight,
+            "min_deployment_pct": min_deployment_pct,
             "dead_zone": dead_zone,
             "normalize_obs": normalize_obs,
             "augment": augment,
             "signal_provider": signal_provider,
+            "benchmark_returns": benchmark_returns,
+            "bar_interval_minutes": bar_interval_minutes,
         }
 
         # Components
@@ -123,6 +135,9 @@ class TradingEnv(gym.Env):
             holding_penalty=holding_penalty,
             pnl_bonus_weight=pnl_bonus_weight,
             reward_scale=reward_scale,
+            cash_drag_penalty=cash_drag_penalty,
+            benchmark_bonus_weight=benchmark_bonus_weight,
+            min_deployment_pct=min_deployment_pct,
         )
 
         self.state_builder = StateBuilder(
@@ -178,8 +193,17 @@ class TradingEnv(gym.Env):
         # Load or generate market data for this episode
         self._load_episode_data(options)
 
-        # Pre-compute session labels
-        session_labels = self.session_manager.compute_session_labels(self.episode_bars)
+        # Pre-compute session labels (meaningless for daily bars)
+        if self._bar_interval_minutes >= 1440:
+            session_labels = np.zeros(self.episode_bars, dtype=np.int8)
+        else:
+            session_labels = self.session_manager.compute_session_labels(self.episode_bars)
+
+        # Wire benchmark returns for the episode window
+        if self._episode_benchmark_returns is not None:
+            self.reward_fn.set_benchmark(self._episode_benchmark_returns)
+        else:
+            self.reward_fn.set_benchmark(None)
 
         # Initialize state builder with pre-computed features
         self.state_builder.init_episode(
@@ -322,6 +346,8 @@ class TradingEnv(gym.Env):
         eval episodes see diverse market conditions instead of always
         replaying the first 78 bars.
         """
+        self._episode_benchmark_returns = None
+
         if self._market_data is not None:
             self._tickers = list(self._market_data.tickers)[:self.num_stocks]
             total_bars = self._market_data.num_bars
@@ -334,6 +360,10 @@ class TradingEnv(gym.Env):
             else:
                 start = 0
             end = start + self.episode_bars
+
+            # Slice benchmark returns to match the episode window
+            if self._benchmark_returns is not None and len(self._benchmark_returns) > end:
+                self._episode_benchmark_returns = self._benchmark_returns[start:end]
 
             self._episode_features = {}
             for ticker in self._tickers:

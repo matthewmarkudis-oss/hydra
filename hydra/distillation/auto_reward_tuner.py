@@ -17,11 +17,14 @@ logger = logging.getLogger("hydra.distillation.auto_reward_tuner")
 
 # Schema defaults (from hydra/config/schema.py RewardConfig)
 _DEFAULTS = {
-    "drawdown_penalty": 0.3,
-    "transaction_penalty": 0.02,
-    "holding_penalty": 0.05,
-    "pnl_bonus_weight": 4.0,
+    "drawdown_penalty": 0.15,
+    "transaction_penalty": 0.01,
+    "holding_penalty": 0.02,
+    "pnl_bonus_weight": 5.0,
     "reward_scale": 100.0,
+    "cash_drag_penalty": 0.3,
+    "benchmark_bonus_weight": 2.0,
+    "min_deployment_pct": 0.3,
 }
 
 # Schema bounds (min, max) for each tunable parameter
@@ -31,6 +34,9 @@ _BOUNDS = {
     "holding_penalty": (0.0, 1.0),
     "pnl_bonus_weight": (0.5, 20.0),  # floor at 0.5 to prevent "don't trade"
     "reward_scale": (10.0, 500.0),
+    "cash_drag_penalty": (0.05, 1.0),
+    "benchmark_bonus_weight": (0.5, 10.0),
+    "min_deployment_pct": (0.1, 0.7),
 }
 
 # Mutation type → (parameter_name, direction)
@@ -41,6 +47,8 @@ _MUTATION_MAP: dict[str, list[tuple[str, int]]] = {
     "tighten_risk": [("drawdown_penalty", +1)],
     "loosen_risk": [("drawdown_penalty", -1), ("transaction_penalty", -1)],
     "prioritize_consistency": [("holding_penalty", +1), ("transaction_penalty", +1)],
+    "increase_deployment": [("cash_drag_penalty", +1), ("min_deployment_pct", +1)],
+    "reward_outperformance": [("benchmark_bonus_weight", +1), ("pnl_bonus_weight", +1)],
 }
 
 

@@ -92,6 +92,9 @@ class GenerationMetrics:
     consistency: float = 0.0
     agent_scores: dict[str, float] = field(default_factory=dict)
     window_sharpes: list[float] = field(default_factory=list)
+    mean_cash_ratio: float = 1.0  # Average fraction of portfolio in cash
+    benchmark_return: float = 0.0  # Benchmark return for this generation
+    mean_return: float = 0.0  # Mean portfolio return for this generation
 
 
 class DiagnosticEngine:
@@ -131,6 +134,8 @@ class DiagnosticEngine:
             self._check_agent_performance,
             self._check_negative_sharpe,
             self._check_low_win_rate,
+            self._check_high_cash_ratio,
+            self._check_benchmark_underperformance,
         ):
             info = checker(result)
             if info:
@@ -445,6 +450,74 @@ class DiagnosticEngine:
             ],
             "severity": "moderate",
             "plain_english": f"Only winning {result.win_rate:.0%} of trades",
+        }
+
+    def _check_high_cash_ratio(self, result: GenerationMetrics) -> dict | None:
+        """Detect agents hoarding cash instead of deploying capital."""
+        if result.mean_cash_ratio <= 0.6:
+            return None
+
+        if result.mean_cash_ratio > 0.8:
+            return {
+                "issues": [f"Excessive cash hoarding: {result.mean_cash_ratio:.0%} portfolio in cash"],
+                "mutations": [
+                    MutationRecord(
+                        mutation_type="increase_deployment", category="parameter",
+                        description=f"Increase deployment pressure (cash ratio={result.mean_cash_ratio:.0%})",
+                        params={}, timestamp=_ts(),
+                    ),
+                    MutationRecord(
+                        mutation_type="decrease_drawdown_penalty", category="parameter",
+                        description="Reduce drawdown penalty to encourage risk-taking",
+                        params={}, timestamp=_ts(),
+                    ),
+                ],
+                "severity": "severe",
+                "plain_english": "Agents are sitting in cash instead of trading — need stronger deployment incentive",
+            }
+        return {
+            "issues": [f"High cash ratio: {result.mean_cash_ratio:.0%} portfolio in cash"],
+            "mutations": [
+                MutationRecord(
+                    mutation_type="increase_deployment", category="parameter",
+                    description=f"Nudge deployment higher (cash ratio={result.mean_cash_ratio:.0%})",
+                    params={}, timestamp=_ts(),
+                ),
+            ],
+            "severity": "moderate",
+            "plain_english": f"Agents holding {result.mean_cash_ratio:.0%} in cash — should be deploying more",
+        }
+
+    def _check_benchmark_underperformance(self, result: GenerationMetrics) -> dict | None:
+        """Detect consistent underperformance vs benchmark across generations."""
+        # Need at least 3 generations of history to detect a pattern
+        if len(self.history) < 3:
+            return None
+
+        recent = self.history[-3:]
+        underperforming_count = sum(
+            1 for r in recent
+            if r.mean_return < r.benchmark_return and r.benchmark_return != 0.0
+        )
+
+        if underperforming_count < 3:
+            return None
+
+        avg_shortfall = sum(
+            r.benchmark_return - r.mean_return for r in recent
+        ) / len(recent)
+
+        return {
+            "issues": [f"Benchmark underperformance: trailing benchmark by {avg_shortfall:.4f}/bar for 3+ generations"],
+            "mutations": [
+                MutationRecord(
+                    mutation_type="reward_outperformance", category="parameter",
+                    description="Increase benchmark bonus to reward outperformance",
+                    params={}, timestamp=_ts(),
+                ),
+            ],
+            "severity": "moderate",
+            "plain_english": "Portfolio has consistently trailed the benchmark — increasing outperformance incentive",
         }
 
     def _check_stagnation(self) -> dict | None:

@@ -216,44 +216,101 @@ class TestEnvConstraints:
         assert halted is True
 
 
-class TestIdleCashPenalty:
-    def test_idle_cash_penalty_triggers_above_threshold(self):
-        """Verify holding_penalty triggers when cash_ratio > 0.8."""
+class TestCashDragPenalty:
+    def test_cash_drag_triggers_with_no_positions(self):
+        """Verify cash_drag penalty is non-zero when 100% in cash."""
         reward_fn = DifferentialSharpeReward(
-            holding_penalty=0.1,
+            cash_drag_penalty=0.3,
+            holding_penalty=0.0,
             transaction_penalty=0.0,
             drawdown_penalty=0.0,
         )
         reward_fn.reset(100_000.0)
 
-        # Agent holds no stocks — 100% cash, cash_ratio = 1.0
+        # Agent holds no stocks — 100% cash
         holdings = np.zeros(3, dtype=np.float32)
         prices = np.array([100.0, 50.0, 200.0], dtype=np.float32)
 
         _, info = reward_fn.compute(100_000.0, 0.0, holdings, prices)
-        assert info["holding_penalty"] < 0, "Expected negative penalty for idle cash"
+        assert info["cash_drag"] < 0, "Expected negative cash drag for 100% cash"
+        assert info["cash_ratio"] == pytest.approx(1.0, abs=0.01)
 
-    def test_idle_cash_penalty_inactive_below_threshold(self):
-        """No idle cash penalty when cash_ratio <= 0.8."""
+    def test_cash_drag_zero_when_fully_deployed(self):
+        """Cash drag should be ~0 when fully deployed."""
         reward_fn = DifferentialSharpeReward(
-            holding_penalty=0.1,
+            cash_drag_penalty=0.3,
+            holding_penalty=0.0,
             transaction_penalty=0.0,
             drawdown_penalty=0.0,
         )
         initial_cash = 100_000.0
         reward_fn.reset(initial_cash)
 
-        # Agent holds ~50% in stocks (well below 80% cash threshold)
-        holdings = np.array([200.0, 400.0, 50.0], dtype=np.float32)
-        prices = np.array([100.0, 50.0, 200.0], dtype=np.float32)
-        # position_value = 200*100 + 400*50 + 50*200 = 20000 + 20000 + 10000 = 50000
-        # cash_ratio = (100000 - 50000) / 100000 = 0.5
+        # Agent holds stocks worth exactly the portfolio value
+        holdings = np.array([500.0, 500.0, 100.0], dtype=np.float32)
+        prices = np.array([100.0, 50.0, 250.0], dtype=np.float32)
+        # position_value = 50000 + 25000 + 25000 = 100000
 
         _, info = reward_fn.compute(initial_cash, 0.0, holdings, prices)
-        # No concentration penalty either (max_weight = 20000/100000 = 0.2 > 0.15)
-        # But idle cash penalty should NOT trigger since cash_ratio = 0.5 < 0.8
-        # The holding_penalty includes concentration penalty for max_weight > 0.15
-        # We just verify it's not worse than the concentration component alone
+        assert info["cash_drag"] == pytest.approx(0.0, abs=0.01)
+
+    def test_deployment_penalty_fires_below_threshold(self):
+        """Deployment penalty triggers when deployed < min_deployment_pct."""
+        reward_fn = DifferentialSharpeReward(
+            cash_drag_penalty=0.3,
+            min_deployment_pct=0.3,
+            holding_penalty=0.0,
+            transaction_penalty=0.0,
+            drawdown_penalty=0.0,
+        )
+        reward_fn.reset(100_000.0)
+
+        # Only 10% deployed
+        holdings = np.array([50.0, 100.0, 10.0], dtype=np.float32)
+        prices = np.array([100.0, 50.0, 200.0], dtype=np.float32)
+        # position_value = 5000 + 5000 + 2000 = 12000, deployed_pct = 0.12
+
+        _, info = reward_fn.compute(100_000.0, 0.0, holdings, prices)
+        assert info["deployment_penalty"] < 0, "Expected negative deployment penalty"
+        assert info["deployed_pct"] < 0.3
+
+    def test_benchmark_bonus_rewards_outperformance(self):
+        """Benchmark bonus is positive when portfolio outperforms."""
+        reward_fn = DifferentialSharpeReward(
+            benchmark_bonus_weight=2.0,
+            cash_drag_penalty=0.0,
+            holding_penalty=0.0,
+            transaction_penalty=0.0,
+            drawdown_penalty=0.0,
+        )
+        reward_fn.reset(100_000.0)
+
+        # Set benchmark return of 0.1%
+        benchmark = np.array([0.001] * 10, dtype=np.float32)
+        reward_fn.set_benchmark(benchmark)
+
+        # Portfolio gains 0.5% → outperforming by 0.4%
+        holdings = np.array([100.0], dtype=np.float32)
+        prices = np.array([100.0], dtype=np.float32)
+        _, info = reward_fn.compute(100_500.0, 0.0, holdings, prices)
+        assert info["benchmark_bonus"] > 0, "Expected positive benchmark bonus for outperformance"
+
+    def test_holding_penalty_concentration_only(self):
+        """Holding penalty only penalizes concentration, not idle cash."""
+        reward_fn = DifferentialSharpeReward(
+            holding_penalty=0.1,
+            cash_drag_penalty=0.0,
+            transaction_penalty=0.0,
+            drawdown_penalty=0.0,
+        )
+        initial_cash = 100_000.0
+        reward_fn.reset(initial_cash)
+
+        # ~50% deployed, max_weight = 20% > 15% threshold
+        holdings = np.array([200.0, 400.0, 50.0], dtype=np.float32)
+        prices = np.array([100.0, 50.0, 200.0], dtype=np.float32)
+
+        _, info = reward_fn.compute(initial_cash, 0.0, holdings, prices)
         concentration_penalty = -0.1 * (0.2 - 0.15)
         assert info["holding_penalty"] == pytest.approx(concentration_penalty, abs=1e-4)
 

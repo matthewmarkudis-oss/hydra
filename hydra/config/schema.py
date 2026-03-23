@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class EnvConfig(BaseModel):
-    """Trading environment configuration."""
+    """Trading environment configuration (5-min intraday bars)."""
 
     num_stocks: int = Field(default=10, ge=1, le=500)
     episode_bars: int = Field(default=390, description="Bars per episode (5-min); 390 = 1 trading week")
@@ -24,16 +24,35 @@ class EnvConfig(BaseModel):
     normalize_obs: bool = Field(default=True)
 
 
+class DailyEnvConfig(BaseModel):
+    """Daily bar trading environment configuration."""
+
+    num_stocks: int = Field(default=10, ge=1, le=500)
+    episode_bars: int = Field(default=60, description="Bars per episode (daily); 60 = ~3 months")
+    bar_interval_minutes: int = Field(default=1440, description="1440 = 1 day")
+    initial_cash: float = Field(default=100_000.0, gt=0)
+    transaction_cost_bps: float = Field(default=2.0, ge=0, description="Lower friction for daily bars")
+    slippage_bps: float = Field(default=1.0, ge=0, description="Lower slippage for daily bars")
+    spread_bps: float = Field(default=0.5, ge=0, description="Lower spread for daily bars")
+    max_position_pct: float = Field(default=0.25, gt=0, le=1.0)
+    max_drawdown_pct: float = Field(default=0.20, gt=0, le=1.0)
+    max_daily_loss_pct: float = Field(default=0.05, gt=0, le=1.0)
+    normalize_obs: bool = Field(default=True)
+
+
 class RewardConfig(BaseModel):
     """Reward function configuration."""
 
     sharpe_window: int = Field(default=20, ge=2)
     sharpe_eta: float = Field(default=0.05, gt=0, description="Differential Sharpe EMA decay")
-    drawdown_penalty: float = Field(default=0.3, ge=0)
-    transaction_penalty: float = Field(default=0.02, ge=0)
-    holding_penalty: float = Field(default=0.05, ge=0, description="Penalty for large/idle positions")
-    pnl_bonus_weight: float = Field(default=4.0, ge=0, description="Weight for direct P&L return bonus")
+    drawdown_penalty: float = Field(default=0.15, ge=0)
+    transaction_penalty: float = Field(default=0.01, ge=0)
+    holding_penalty: float = Field(default=0.02, ge=0, description="Penalty for large/idle positions")
+    pnl_bonus_weight: float = Field(default=5.0, ge=0, description="Weight for direct P&L return bonus")
     reward_scale: float = Field(default=100.0, gt=0, description="Multiplier for reward signal magnitude")
+    cash_drag_penalty: float = Field(default=0.3, ge=0, description="Penalty for undeployed capital")
+    benchmark_bonus_weight: float = Field(default=2.0, ge=0, description="Weight for benchmark outperformance")
+    min_deployment_pct: float = Field(default=0.3, ge=0, le=1.0, description="Minimum invested fraction")
 
 
 class AgentConfig(BaseModel):
@@ -143,6 +162,7 @@ class HydraConfig(BaseModel):
     """Root configuration for the Hydra system."""
 
     env: EnvConfig = Field(default_factory=EnvConfig)
+    daily_env: DailyEnvConfig = Field(default_factory=DailyEnvConfig)
     reward: RewardConfig = Field(default_factory=RewardConfig)
     pool: PoolConfig = Field(default_factory=PoolConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)

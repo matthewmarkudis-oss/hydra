@@ -46,6 +46,9 @@ def build_environments(
 
     actual_num_stocks = min(num_stocks, len(tickers)) if tickers else num_stocks
 
+    # Convert benchmark close prices to per-bar returns for reward function
+    benchmark_returns = _compute_benchmark_returns(data_result.get("benchmark_data"))
+
     logger.info(f"Building environments: {actual_num_stocks} stocks, {num_days} days")
     logger.info(f"Split: train={train_ratio:.0%}, val={val_ratio:.0%}, test={1-train_ratio-val_ratio:.0%}")
 
@@ -62,6 +65,7 @@ def build_environments(
             initial_cash=initial_cash,
             augment=augment,
             seed=seed + hash(split),
+            benchmark_returns=benchmark_returns,
             **env_kwargs,
         )
 
@@ -75,3 +79,25 @@ def build_environments(
 
     logger.info("Environments built successfully")
     return envs
+
+
+def _compute_benchmark_returns(benchmark_data: dict | None) -> np.ndarray | None:
+    """Convert benchmark close prices to per-bar returns.
+
+    Args:
+        benchmark_data: Dict with 'close' key containing price list, or None.
+
+    Returns:
+        Float32 array of per-bar returns, or None if no benchmark available.
+    """
+    if benchmark_data is None:
+        return None
+
+    close_list = benchmark_data.get("close")
+    if not close_list or len(close_list) < 2:
+        return None
+
+    close = np.array(close_list, dtype=np.float32)
+    returns = np.diff(close) / np.maximum(close[:-1], np.float32(1e-8))
+    # Prepend a zero for the first bar (no prior bar to compare)
+    return np.concatenate([np.zeros(1, dtype=np.float32), returns])

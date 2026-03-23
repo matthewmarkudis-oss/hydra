@@ -33,10 +33,11 @@ def prepare_data(
     num_days: int = 20,
     seed: int = 42,
     adapter_config: dict | None = None,
+    interval_minutes: int = 5,
 ) -> dict[str, Any]:
     """Prepare market data for RL training.
 
-    Fetches historical 5-min bars, computes indicators, and caches as .npy.
+    Fetches historical bars (5-min or daily), computes indicators, and caches.
     Returns a SharedMarketData object for the environment.
 
     Args:
@@ -50,6 +51,7 @@ def prepare_data(
         num_days: Number of trading days to prepare.
         seed: Random seed for synthetic data.
         adapter_config: Alpaca credentials dict (api_key, secret_key, base_url).
+        interval_minutes: Bar interval in minutes (5 for intraday, 1440 for daily).
 
     Returns:
         Dict with 'market_data' (SharedMarketData), 'trading_dates', etc.
@@ -60,10 +62,12 @@ def prepare_data(
     feature_store = FeatureStore(cache_dir)
 
     if use_synthetic:
-        return _prepare_synthetic(tickers, episode_bars, num_days, seed, feature_store)
+        return _prepare_synthetic(tickers, episode_bars, num_days, seed, feature_store,
+                                  interval_minutes=interval_minutes)
 
     return _prepare_historical(tickers, start_date, end_date, episode_bars, feature_store,
-                               adapter_config=adapter_config)
+                               adapter_config=adapter_config,
+                               interval_minutes=interval_minutes)
 
 
 def _prepare_synthetic(
@@ -72,9 +76,10 @@ def _prepare_synthetic(
     num_days: int,
     seed: int,
     feature_store: FeatureStore,
+    interval_minutes: int = 5,
 ) -> dict[str, Any]:
     """Generate synthetic data for testing/development."""
-    logger.info(f"Generating synthetic data: {len(tickers)} tickers, {num_days} days")
+    logger.info(f"Generating synthetic data: {len(tickers)} tickers, {num_days} days, interval={interval_minutes}min")
 
     all_ohlcv: dict[str, dict[str, np.ndarray]] = {}
     all_indicators: dict[str, dict[str, np.ndarray]] = {}
@@ -108,7 +113,8 @@ def _prepare_synthetic(
     )
 
     # Generate synthetic benchmark series (simulates SPY-like index)
-    benchmark_data = _generate_synthetic_benchmark(total_bars, seed)
+    benchmark_data = _generate_synthetic_benchmark(total_bars, seed,
+                                                    interval_minutes=interval_minutes)
 
     return {
         "market_data": market_data,
@@ -117,6 +123,7 @@ def _prepare_synthetic(
         "episode_bars": episode_bars,
         "total_bars": total_bars,
         "source": "synthetic",
+        "interval_minutes": interval_minutes,
         "benchmark_data": benchmark_data,
     }
 
@@ -128,12 +135,15 @@ def _prepare_historical(
     episode_bars: int,
     feature_store: FeatureStore,
     adapter_config: dict | None = None,
+    interval_minutes: int = 5,
 ) -> dict[str, Any]:
     """Fetch and prepare historical data.
 
     Uses local Parquet cache (data/bars_cache/) so Alpaca API is only
     hit on the first run for a given ticker + date range.  Subsequent
     runs load from disk in seconds instead of minutes.
+
+    Supports both intraday (5-min) and daily (1440-min) bar intervals.
     """
     adapter = DataAdapter(config=adapter_config)
 
@@ -141,14 +151,18 @@ def _prepare_historical(
     end = end_date or date(2024, 12, 31)
     trading_dates = adapter.get_trading_dates(start, end)
 
-    logger.info(f"Fetching historical data: {len(tickers)} tickers, {len(trading_dates)} dates")
+    mode = "daily" if interval_minutes >= 1440 else f"{interval_minutes}-min"
+    logger.info(f"Fetching historical data: {len(tickers)} tickers, {len(trading_dates)} dates, mode={mode}")
 
     all_ohlcv: dict[str, dict[str, np.ndarray]] = {}
     all_indicators: dict[str, dict[str, np.ndarray]] = {}
 
     for ticker in tickers:
         # Bulk fetch: one Alpaca call per ticker (or instant cache hit)
-        df = adapter.get_bars_range(ticker, start, end, interval_minutes=5)
+        if interval_minutes >= 1440:
+            df = adapter.get_daily_bars(ticker, start, end, limit=len(trading_dates) + 50)
+        else:
+            df = adapter.get_bars_range(ticker, start, end, interval_minutes=interval_minutes)
 
         if df is None or len(df) == 0:
             logger.warning(f"No data for {ticker}, using synthetic fallback")
@@ -176,7 +190,8 @@ def _prepare_historical(
     )
 
     # Fetch SPY as benchmark (not part of trading universe)
-    benchmark_data = _fetch_benchmark("SPY", adapter, start, end, trading_dates, episode_bars)
+    benchmark_data = _fetch_benchmark("SPY", adapter, start, end, trading_dates, episode_bars,
+                                       interval_minutes=interval_minutes)
 
     return {
         "market_data": market_data,
@@ -186,6 +201,7 @@ def _prepare_historical(
         "episode_bars": episode_bars,
         "total_bars": total_bars,
         "source": "historical",
+        "interval_minutes": interval_minutes,
         "benchmark_data": benchmark_data,
     }
 
@@ -197,13 +213,18 @@ def _fetch_benchmark(
     end_date: date,
     trading_dates: list[date],
     episode_bars: int,
+    interval_minutes: int = 5,
 ) -> dict[str, Any]:
     """Fetch benchmark ticker (e.g. SPY) close prices for comparison."""
-    df = adapter.get_bars_range(ticker, start_date, end_date, interval_minutes=5)
+    if interval_minutes >= 1440:
+        df = adapter.get_daily_bars(ticker, start_date, end_date, limit=len(trading_dates) + 50)
+    else:
+        df = adapter.get_bars_range(ticker, start_date, end_date, interval_minutes=interval_minutes)
 
     if df is None or len(df) == 0:
         logger.warning(f"No benchmark data for {ticker}, using synthetic fallback")
-        return _generate_synthetic_benchmark(episode_bars * len(trading_dates), seed=99)
+        return _generate_synthetic_benchmark(episode_bars * len(trading_dates), seed=99,
+                                              interval_minutes=interval_minutes)
 
     close = df["close"].values.astype(np.float32)
     return {
@@ -212,15 +233,19 @@ def _fetch_benchmark(
     }
 
 
-def _generate_synthetic_benchmark(total_bars: int, seed: int) -> dict[str, Any]:
+def _generate_synthetic_benchmark(
+    total_bars: int, seed: int, interval_minutes: int = 5,
+) -> dict[str, Any]:
     """Generate a synthetic benchmark series (SPY-like index) for testing."""
     rng = np.random.default_rng(seed + 9999)
     # SPY-like: ~10% annual return, ~16% annual vol
-    # At 5-min bars, ~78 bars/day, ~252 days/year => ~19,656 bars/year
     daily_return = 0.10 / 252
     daily_vol = 0.16 / np.sqrt(252)
-    bar_return = daily_return / 78
-    bar_vol = daily_vol / np.sqrt(78)
+
+    # Scale return/vol to bar interval
+    bars_per_day = 1 if interval_minutes >= 1440 else max(1, 390 // interval_minutes)
+    bar_return = daily_return / bars_per_day
+    bar_vol = daily_vol / np.sqrt(bars_per_day)
 
     returns = rng.normal(bar_return, bar_vol, total_bars).astype(np.float32)
     close = float(450.0) * np.cumprod(1 + returns).astype(np.float32)

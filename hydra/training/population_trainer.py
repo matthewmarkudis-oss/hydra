@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 
 from hydra.agents.agent_pool import AgentPool
+from hydra.distillation.auto_reward_tuner import AutoRewardTuner
 from hydra.envs.trading_env import TradingEnv
 from hydra.evaluation.competition import AgentCompetitionScore, CompetitionRebalancer
 from hydra.evaluation.conviction import ConvictionCalibrator
@@ -69,6 +70,7 @@ class PopulationTrainer:
         enable_competition: bool = True,
         enable_conviction: bool = True,
         start_generation: int = 0,
+        auto_reward_tuner: AutoRewardTuner | None = None,
     ):
         self.env = env
         self.pool = pool
@@ -100,6 +102,9 @@ class PopulationTrainer:
         # ELEOS Bayesian conviction calibrator
         self.enable_conviction = enable_conviction
         self._conviction = ConvictionCalibrator() if enable_conviction else None
+
+        # Auto reward tuner (CHIMERA-driven)
+        self._auto_reward_tuner = auto_reward_tuner
 
     def train(self) -> dict[str, Any]:
         """Run full population-based training with CHIMERA/PROMETHEUS/ELEOS integration."""
@@ -140,6 +145,31 @@ class PopulationTrainer:
             diagnosis = None
             if self._diagnostics:
                 diagnosis = self._run_diagnostics(train_result, eval_scores)
+
+            # --- Auto Reward Tuning (CHIMERA-driven) ---
+            if (
+                self._auto_reward_tuner
+                and diagnosis
+                and self._auto_reward_tuner.should_tune(self._generation)
+                and hasattr(self.env, "reward_fn")
+            ):
+                try:
+                    mutations = diagnosis.get("recommended_mutations", [])
+                    current_params = self.env.reward_fn.get_params()
+                    new_params = self._auto_reward_tuner.apply_mutations(
+                        current_params, mutations
+                    )
+                    if new_params != current_params:
+                        self.env.reward_fn.update_params(new_params)
+                        # Also update per-agent envs
+                        for agent_env in self._agent_envs.values():
+                            for i in range(getattr(agent_env, "num_envs", 0)):
+                                sub_env = agent_env.envs[i]
+                                if hasattr(sub_env, "reward_fn"):
+                                    sub_env.reward_fn.update_params(new_params)
+                        logger.info(f"  Reward params auto-tuned at gen {self._generation}")
+                except Exception as e:
+                    logger.warning(f"Auto reward tuning failed: {e}")
 
             # --- ELEOS: Bayesian conviction calibration (runs BEFORE PROMETHEUS) ---
             # Trust gating: new/unproven agents start at 50% allocation.

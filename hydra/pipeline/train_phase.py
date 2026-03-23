@@ -85,12 +85,30 @@ def run_training(
             )
 
             # Ensure learning agents exist (they may not be in the checkpoint
-            # if only static snapshots were saved)
+            # if only static snapshots were saved, or if all loads failed)
             if not pool.get_learning_agents():
-                logger.info("No learning agents in checkpoint, adding fresh ones")
-                pool.add(PPOAgent("ppo_1", obs_dim, action_dim, prefer_gpu=False))
-                pool.add(TD3Agent("td3_1", obs_dim, action_dim, prefer_gpu=False))
-                pool.add(RecurrentPPOAgent("rppo_1", obs_dim, action_dim, prefer_gpu=False))
+                logger.warning(
+                    "No learning agents after initial load from "
+                    f"{ckpt_path}. Attempting CPU-only recovery..."
+                )
+                recovered = _try_recover_learning_agents(pool, ckpt_path, obs_dim, action_dim)
+                if not recovered:
+                    logger.error(
+                        "WEIGHT LOSS: No learning agents survived checkpoint load or "
+                        f"CPU recovery from {ckpt_path}. All learned weights are LOST. "
+                        "Adding fresh random-weight agents — training restarts from scratch."
+                    )
+                    pool.add(PPOAgent("ppo_1", obs_dim, action_dim, prefer_gpu=False))
+                    pool.add(PPOAgent("ppo_2", obs_dim, action_dim, net_arch=[128, 128],
+                                       learning_rate=1e-3, ent_coef=0.02, prefer_gpu=False))
+                    pool.add(TD3Agent("td3_1", obs_dim, action_dim, prefer_gpu=False))
+                    pool.add(RecurrentPPOAgent("rppo_1", obs_dim, action_dim, prefer_gpu=False))
+
+            # Add ppo_2 variant if not already in pool (new agent added post-checkpoint)
+            if not pool.get("ppo_2"):
+                pool.add(PPOAgent("ppo_2", obs_dim, action_dim, net_arch=[128, 128],
+                                   learning_rate=1e-3, ent_coef=0.02, prefer_gpu=False))
+                logger.info("Added new learning agent 'ppo_2' (128x128, lr=1e-3, ent=0.02)")
     else:
         # Auto warm-start: load learning agents from latest checkpoint if available
         pool = _try_warm_start(checkpoint_dir, obs_dim, action_dim)
@@ -114,6 +132,19 @@ def run_training(
         f"(env_based={train_env.episode_bars * 100}, ppo_min={ppo_n_steps * 4})"
     )
 
+    # Auto reward tuner (CHIMERA-driven)
+    auto_tuner = None
+    try:
+        from hydra.distillation.auto_reward_tuner import AutoRewardTuner
+        auto_tuner = AutoRewardTuner(
+            tune_every_n=5,
+            max_delta_pct=0.20,
+            enabled=True,
+        )
+        logger.info("Auto reward tuner enabled (tune every 5 generations, max delta 20%)")
+    except Exception as e:
+        logger.warning(f"Could not initialize auto reward tuner: {e}")
+
     # Run population-based training
     pop_trainer = PopulationTrainer(
         env=train_env,
@@ -127,6 +158,7 @@ def run_training(
         checkpoint_dir=checkpoint_dir,
         train_timesteps=train_timesteps,
         start_generation=start_generation,
+        auto_reward_tuner=auto_tuner,
     )
 
     # Live dashboard updates — write partial state after each generation.
@@ -172,6 +204,8 @@ def _build_fresh_pool(obs_dim: int, action_dim: int) -> AgentPool:
     # chain is broken across CPU fallback ops like aten::std.correction),
     # and SB3 itself warns that MLP policies train faster on CPU anyway.
     pool.add(PPOAgent("ppo_1", obs_dim, action_dim, net_arch=net_arch, prefer_gpu=False))
+    pool.add(PPOAgent("ppo_2", obs_dim, action_dim, net_arch=[128, 128],
+                       learning_rate=1e-3, ent_coef=0.02, prefer_gpu=False))
     pool.add(TD3Agent("td3_1", obs_dim, action_dim, net_arch=net_arch, prefer_gpu=False))
     pool.add(RecurrentPPOAgent("rppo_1", obs_dim, action_dim, prefer_gpu=False))
 
@@ -238,6 +272,53 @@ def _save_latest_checkpoint_pointer(checkpoint_dir: str, num_generations: int) -
         logger.info(f"Saved latest checkpoint pointer: {best_path}")
     except Exception as e:
         logger.warning(f"Failed to save latest checkpoint pointer: {e}")
+
+
+def _try_recover_learning_agents(
+    pool: AgentPool,
+    ckpt_path: Path,
+    obs_dim: int,
+    action_dim: int,
+) -> bool:
+    """Attempt CPU-only reload of learning agents from checkpoint.
+
+    Tries to recreate each expected learning agent (PPO, TD3, RecurrentPPO)
+    and load their weights with explicit CPU device. This handles cases where
+    the initial pool.load() silently failed due to device compatibility issues.
+
+    Returns True if at least one learning agent was recovered.
+    """
+    agent_specs = [
+        ("ppo_1", PPOAgent, {}),
+        ("ppo_2", PPOAgent, {"net_arch": [128, 128], "learning_rate": 1e-3, "ent_coef": 0.02}),
+        ("td3_1", TD3Agent, {}),
+        ("rppo_1", RecurrentPPOAgent, {}),
+    ]
+
+    recovered = 0
+    for name, agent_cls, kwargs in agent_specs:
+        if pool.get(name):
+            # Already loaded successfully
+            if hasattr(pool.get(name), "frozen") and not pool.get(name).frozen:
+                recovered += 1
+            continue
+
+        model_path = ckpt_path / name / "model"
+        if not model_path.exists() and not model_path.with_suffix(".zip").exists():
+            continue
+
+        try:
+            agent = agent_cls(name, obs_dim, action_dim, prefer_gpu=False, **kwargs)
+            agent.load(model_path)
+            pool.add(agent)
+            recovered += 1
+            logger.info(f"CPU recovery succeeded for agent '{name}'")
+        except Exception as e:
+            logger.error(f"CPU recovery failed for agent '{name}': {e}")
+
+    if recovered > 0:
+        logger.info(f"Recovered {recovered} learning agent(s) from checkpoint via CPU fallback")
+    return recovered > 0
 
 
 def _try_warm_start(

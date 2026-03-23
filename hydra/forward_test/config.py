@@ -67,3 +67,17 @@ class ForwardTestConfig(BaseModel):
         le=1.0,
         description="Daily loss threshold that triggers an alert.",
     )
+    allocation_method: str = Field(
+        default="sharpe_weighted",
+        description="Capital allocation method: sharpe_weighted | equal.",
+    )
+    min_allocation_pct: float = Field(
+        default=0.05,
+        ge=0,
+        le=1.0,
+        description="Minimum allocation percentage. Agents below this get zero.",
+    )
+    route_to_broker: bool = Field(
+        default=False,
+        description="Also route orders through real broker for paper trading.",
+    )

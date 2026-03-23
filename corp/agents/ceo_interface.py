@@ -399,71 +399,37 @@ class CEOInterface(BaseCorpAgent):
     # ------------------------------------------------------------------
 
     def _llm_parse(self, command: str, config_dict: dict) -> dict | None:
-        """Use Claude Sonnet to parse the command into structured intent."""
-        try:
-            import anthropic
-        except ImportError:
-            logger.debug("anthropic package not installed, using regex fallback")
-            return None
-
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            logger.debug("No ANTHROPIC_API_KEY set, using regex fallback")
-            return None
-
+        """Use LLM to parse the command into structured intent (Groq free tier or Anthropic)."""
         if not SYSTEM_PROMPT:
             logger.debug("No system prompt loaded, using regex fallback")
             return None
 
-        try:
-            client = anthropic.Anthropic(api_key=api_key)
+        from corp.llm_client import call_llm_json
 
-            # Include current tickers in the prompt so LLM can build correct list
-            tickers = config_dict.get("data", {}).get("tickers", [])
-            user_content = (
-                f"Current tickers: {json.dumps(tickers)}\n"
-                f"Current config summary:\n"
-                f"  env.max_position_pct: {config_dict.get('env', {}).get('max_position_pct')}\n"
-                f"  env.max_drawdown_pct: {config_dict.get('env', {}).get('max_drawdown_pct')}\n"
-                f"  reward.transaction_penalty: {config_dict.get('reward', {}).get('transaction_penalty')}\n"
-                f"  reward.drawdown_penalty: {config_dict.get('reward', {}).get('drawdown_penalty')}\n"
-                f"  reward.reward_scale: {config_dict.get('reward', {}).get('reward_scale')}\n"
-                f"  training.num_generations: {config_dict.get('training', {}).get('num_generations')}\n"
-                f"\nCEO command: {command}"
-            )
+        # Include current tickers in the prompt so LLM can build correct list
+        tickers = config_dict.get("data", {}).get("tickers", [])
+        user_content = (
+            f"Current tickers: {json.dumps(tickers)}\n"
+            f"Current config summary:\n"
+            f"  env.max_position_pct: {config_dict.get('env', {}).get('max_position_pct')}\n"
+            f"  env.max_drawdown_pct: {config_dict.get('env', {}).get('max_drawdown_pct')}\n"
+            f"  reward.transaction_penalty: {config_dict.get('reward', {}).get('transaction_penalty')}\n"
+            f"  reward.drawdown_penalty: {config_dict.get('reward', {}).get('drawdown_penalty')}\n"
+            f"  reward.reward_scale: {config_dict.get('reward', {}).get('reward_scale')}\n"
+            f"  training.num_generations: {config_dict.get('training', {}).get('num_generations')}\n"
+            f"\nCEO command: {command}"
+        )
 
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=1500,
-                temperature=0.2,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_content}],
-            )
-
-            text = response.content[0].text.strip()
-
-            # Handle markdown code blocks
-            if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-
-            parsed = json.loads(text)
-
-            return {
-                "intent": parsed.get("intent", "unknown"),
-                "patch": parsed.get("patch"),
-                "explanation": parsed.get("explanation", ""),
-                "risks": parsed.get("risks", []),
-            }
-
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM response as JSON: {e}")
+        parsed = call_llm_json(SYSTEM_PROMPT, user_content, max_tokens=1500, temperature=0.2)
+        if parsed is None:
             return None
-        except Exception as e:
-            logger.warning(f"LLM call failed: {e}")
-            return None
+
+        return {
+            "intent": parsed.get("intent", "unknown"),
+            "patch": parsed.get("patch"),
+            "explanation": parsed.get("explanation", ""),
+            "risks": parsed.get("risks", []),
+        }
 
     # ------------------------------------------------------------------
     # Regex-based fallback parsing

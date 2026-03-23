@@ -141,9 +141,21 @@ class GraduationManager(BaseCorpAgent):
         passed_agents = validation.get("passed_agents", [])
 
         if not passed_agents:
-            # Check top-level validation
+            # Check top-level validation — may be either:
+            #   {"passed_agents": ["name1", ...]}  (legacy format)
+            #   {"name1": {"passed": true, ...}, "name2": {...}}  (pipeline format)
             top_validation = ts.get("validation", {})
             passed_agents = top_validation.get("passed_agents", [])
+
+            # Handle pipeline format: dict of agent_name -> result dicts
+            if not passed_agents and top_validation:
+                passed_agents = [
+                    name for name, result in top_validation.items()
+                    if isinstance(result, dict) and result.get("passed", False)
+                ]
+                # Use top_validation as agent_results for ranking
+                if passed_agents:
+                    validation = {"agent_results": top_validation}
 
         if not passed_agents:
             return {
@@ -234,7 +246,62 @@ class GraduationManager(BaseCorpAgent):
     def _submit_graduation_proposal(
         self, candidates: list[dict], ft_config: dict
     ) -> None:
-        """Submit a graduation proposal for CEO approval."""
+        """Submit a graduation proposal for CEO approval.
+
+        Computes Sharpe-weighted capital allocations so the forward test
+        runner knows how much capital each agent gets.
+        """
+        from hydra.forward_test.capital_allocator import compute_allocations
+
+        # Build agent_results dict for the allocator
+        agent_results = {}
+        for c in candidates:
+            metrics = c.get("backtest_metrics", {})
+            agent_results[c["name"]] = {
+                "sharpe": metrics.get("sharpe", 0),
+                "passed": True,  # already passed ATHENA to reach here
+            }
+
+        total_capital = ft_config.get("initial_capital", 10000.0)
+        max_agents = ft_config.get("max_agents", 3)
+        min_alloc = ft_config.get("min_allocation_pct", 0.05)
+        alloc_method = ft_config.get("allocation_method", "sharpe_weighted")
+
+        if alloc_method == "equal":
+            # Equal allocation — bypass Sharpe weighting
+            allocations = compute_allocations(
+                agent_results,
+                total_capital=total_capital,
+                min_sharpe=0.0,
+                max_agents=max_agents,
+                min_allocation_pct=0.0,
+            )
+            # Override weights to equal
+            if allocations:
+                equal_w = 1.0 / len(allocations)
+                equal_cap = total_capital / len(allocations)
+                for a in allocations:
+                    a.weight = equal_w
+                    a.capital = equal_cap
+        else:
+            allocations = compute_allocations(
+                agent_results,
+                total_capital=total_capital,
+                min_sharpe=ft_config.get("min_sharpe", 0.3),
+                max_agents=max_agents,
+                min_allocation_pct=min_alloc,
+            )
+
+        allocation_list = [
+            {
+                "agent_name": a.agent_name,
+                "sharpe": a.sharpe,
+                "weight": round(a.weight, 4),
+                "capital": round(a.capital, 2),
+            }
+            for a in allocations
+        ]
+
         agent_summary = []
         for c in candidates:
             metrics = c.get("backtest_metrics", {})
@@ -251,7 +318,10 @@ class GraduationManager(BaseCorpAgent):
                 f"Forward test graduation: {len(candidates)} agent(s) passed ATHENA "
                 f"and ranked by CHIMERA fitness. Ready for {ft_config.get('duration_days', 20)}-day "
                 f"sandbox simulation with ${ft_config.get('initial_capital', 10000):,.0f} capital.\n"
-                f"Candidates: {'; '.join(agent_summary)}"
+                f"Candidates: {'; '.join(agent_summary)}\n"
+                f"Allocation: {alloc_method} — "
+                + ", ".join(f"{a['agent_name']}: {a['weight']:.0%} (${a['capital']:,.0f})"
+                            for a in allocation_list)
             ),
             "candidates": [
                 {
@@ -261,6 +331,7 @@ class GraduationManager(BaseCorpAgent):
                 }
                 for c in candidates
             ],
+            "allocations": allocation_list,
             "forward_test_config": ft_config,
             "confidence": 0.8,
             "risk": "medium",

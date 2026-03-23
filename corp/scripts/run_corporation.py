@@ -44,13 +44,17 @@ from corp.graph.corporation_graph import CorpGraph, build_corporation_graph
 logger = logging.getLogger("corp")
 
 
-def _load_alpaca_config() -> dict | None:
-    """Load Alpaca credentials from trading_agents/.env for historical data."""
+def _load_env_file() -> None:
+    """Load all keys from trading_agents/.env into os.environ.
+
+    Loads Alpaca, NewsAPI, Finnhub, Anthropic, and any other keys
+    defined in the .env file. Does not overwrite existing env vars.
+    """
+    import os as _os
     env_path = Path(__file__).parent.parent.parent.parent / "trading_agents" / ".env"
     if not env_path.exists():
-        return None
+        return
 
-    config = {}
     with open(env_path) as f:
         for line in f:
             line = line.strip()
@@ -58,15 +62,25 @@ def _load_alpaca_config() -> dict | None:
                 continue
             key, _, value = line.partition("=")
             key, value = key.strip(), value.strip()
-            if key == "ALPACA_API_KEY" and value:
-                config["api_key"] = value
-            elif key == "ALPACA_SECRET_KEY" and value:
-                config["secret_key"] = value
-            elif key == "ALPACA_BASE_URL" and value:
-                config["base_url"] = value
+            if key and value and key not in _os.environ:
+                _os.environ[key] = value
 
-    if "api_key" in config and "secret_key" in config:
-        return config
+
+# Load env vars at import time so corp agents can read API keys
+_load_env_file()
+
+
+def _load_alpaca_config() -> dict | None:
+    """Load Alpaca credentials from environment."""
+    import os as _os
+    api_key = _os.environ.get("ALPACA_API_KEY", "")
+    secret_key = _os.environ.get("ALPACA_SECRET_KEY", "")
+    if api_key and secret_key:
+        return {
+            "api_key": api_key,
+            "secret_key": secret_key,
+            "base_url": _os.environ.get("ALPACA_BASE_URL", ""),
+        }
     return None
 
 

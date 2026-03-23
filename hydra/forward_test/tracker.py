@@ -453,6 +453,56 @@ class ForwardTestTracker:
             ),
         }
 
+    # ── Combined Equity / Allocation ──────────────────────────────────
+
+    def get_combined_equity_curve(
+        self, agent_names: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Build a combined equity curve from daily snapshots.
+
+        Returns a list of dicts, one per date, with combined portfolio
+        value and per-agent breakdown.
+
+        Args:
+            agent_names: Optional filter. If None, include all agents.
+        """
+        snapshots: dict[str, dict[str, float]] = {}  # date → {agent: value}
+        for entry in self._read_log():
+            if entry.get("type") != "daily_snapshot":
+                continue
+            agent = entry.get("agent", "")
+            if agent_names and agent not in agent_names:
+                continue
+            date = entry.get("date", "")
+            metrics = entry.get("metrics", {})
+            pv = metrics.get("portfolio_value", 0.0)
+            if date:
+                snapshots.setdefault(date, {})[agent] = pv
+
+        curve = []
+        for date in sorted(snapshots.keys()):
+            per_agent = snapshots[date]
+            curve.append({
+                "date": date,
+                "combined_value": round(sum(per_agent.values()), 2),
+                "per_agent": {k: round(v, 2) for k, v in per_agent.items()},
+            })
+        return curve
+
+    def get_allocation_summary(self) -> dict[str, Any]:
+        """Extract allocation data from the forward_test_start event.
+
+        Returns the allocations dict from the start event, or empty dict.
+        """
+        for entry in self._read_log():
+            if (
+                entry.get("type") == "event"
+                and entry.get("event") == "forward_test_start"
+            ):
+                detail = entry.get("detail", {})
+                return detail.get("allocations", {})
+        return {}
+
     # ── State Management ───────────────────────────────────────────────────
 
     def save_state(self, state: dict) -> None:

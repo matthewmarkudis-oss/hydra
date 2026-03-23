@@ -4,6 +4,9 @@ Loads StaticAgent checkpoints, polls bars during market hours,
 translates continuous RL actions to discrete orders, and routes
 through AlpacaBroker (sandbox enforced).
 
+Each agent trades against its own virtual sub-account with capital
+allocated proportional to Sharpe ratio from ATHENA validation.
+
 Backtesting and training research only. All broker interactions
 are through AlpacaBroker which enforces sandbox mode in its constructor.
 """
@@ -18,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from hydra.forward_test.sub_account import SubAccount
 from hydra.forward_test.tracker import ForwardTestTracker
 
 logger = logging.getLogger("hydra.forward_test.runner")
@@ -29,9 +33,9 @@ class ForwardTestRunner:
     The runner:
     1. Loads StaticAgent checkpoints
     2. Polls bars at configured intervals during market hours
-    3. Feeds observations to each agent via select_action
+    3. Feeds observations to each agent from its own sub-account state
     4. Translates continuous actions [-1, 1] into position targets
-    5. Computes order deltas and routes through broker
+    5. Applies fills to virtual sub-accounts (optionally routes to broker)
     6. Logs everything to tracker
     7. Tracks slippage between expected and actual fill prices
     8. Alerts on daily loss / drawdown breaches
@@ -45,6 +49,7 @@ class ForwardTestRunner:
         tickers: list[str],
         config: dict,
         tracker: ForwardTestTracker,
+        allocations: list | None = None,
     ):
         """Initialize the forward test runner.
 
@@ -55,6 +60,8 @@ class ForwardTestRunner:
             tickers: List of ticker symbols to trade.
             config: Forward test config dict.
             tracker: ForwardTestTracker for logging.
+            allocations: List of Allocation objects from capital_allocator.
+                If None, capital is split equally among agents.
         """
         self._agents = agents
         self._broker = broker
@@ -68,11 +75,16 @@ class ForwardTestRunner:
         self._max_days = config.get("duration_days", 60)
         self._max_position_pct = config.get("max_position_pct", 0.20)
         self._poll_interval = config.get("poll_interval_minutes", 5) * 60  # seconds
+        self._route_to_broker = config.get("route_to_broker", False)
 
         # Pending order prices for slippage tracking
-        # {order_id: {"ticker": str, "expected_price": float, "side": str, "qty": int, "agent": str}}
         self._pending_orders: dict[str, dict] = {}
         self._last_fill_check: str | None = None
+
+        # Sub-account management — each agent gets its own virtual portfolio
+        self._allocations = allocations or []
+        self._sub_accounts: dict[str, SubAccount] = {}
+        self._init_sub_accounts()
 
         # Live state builder for full observation vector
         self._live_state_builder = None
@@ -94,6 +106,33 @@ class ForwardTestRunner:
         except Exception as e:
             logger.debug("Alert manager unavailable: %s", e)
 
+    def _init_sub_accounts(self) -> None:
+        """Initialize sub-accounts from allocations or equal-split."""
+        total_capital = self._config.get("initial_capital", 10000.0)
+
+        if self._allocations:
+            for alloc in self._allocations:
+                self._sub_accounts[alloc.agent_name] = SubAccount(
+                    agent_name=alloc.agent_name,
+                    initial_capital=alloc.capital,
+                )
+                logger.info(
+                    "Sub-account %s: $%.2f (%.1f%% of total)",
+                    alloc.agent_name, alloc.capital, alloc.weight * 100,
+                )
+        else:
+            # Equal split fallback
+            per_agent = total_capital / max(len(self._agents), 1)
+            for agent in self._agents:
+                self._sub_accounts[agent.name] = SubAccount(
+                    agent_name=agent.name,
+                    initial_capital=per_agent,
+                )
+            logger.info(
+                "Sub-accounts: equal split $%.2f each across %d agents",
+                per_agent, len(self._agents),
+            )
+
     @property
     def is_running(self) -> bool:
         return self._running
@@ -105,11 +144,25 @@ class ForwardTestRunner:
         This is a blocking call — run in a thread if needed.
         """
         self._running = True
+
+        # Include allocation data in start event
+        alloc_data = {}
+        if self._allocations:
+            alloc_data = {
+                a.agent_name: {
+                    "sharpe": a.sharpe,
+                    "capital": a.capital,
+                    "weight": a.weight,
+                }
+                for a in self._allocations
+            }
+
         self._tracker.record_event("forward_test_start", {
             "agents": [a.name for a in self._agents],
             "tickers": self._tickers,
             "config": self._config,
             "started_at": datetime.now().isoformat(),
+            "allocations": alloc_data,
         })
 
         logger.info(
@@ -182,11 +235,11 @@ class ForwardTestRunner:
         self._running = False
 
     def _run_bar(self, timestamp: str) -> None:
-        """Execute one bar cycle for all agents."""
+        """Execute one bar cycle — each agent trades its own sub-account."""
         if self._halted:
             return
 
-        # 1. Fetch latest prices for all tickers
+        # 1. Fetch latest prices for all tickers (shared market data)
         prices = {}
         for ticker in self._tickers:
             price = self._broker.get_latest_price(ticker)
@@ -197,55 +250,48 @@ class ForwardTestRunner:
             logger.warning("No prices available, skipping bar")
             return
 
-        # 2. Get current account state
-        account = self._broker.get_account()
-        portfolio_value = account.get("portfolio_value", 0)
-        cash = account.get("cash", 0)
-
-        if portfolio_value <= 0:
-            logger.warning("Portfolio value is zero or negative, skipping bar")
-            return
-
-        # 3. Get current positions
-        positions_list = self._broker.get_open_positions()
-        current_positions = {p["symbol"]: p["qty"] for p in positions_list}
-
-        # 4. Update live state builder with bar data (if available)
+        # 2. Update live state builder with bar data
         self._update_live_bars(prices)
 
-        # 5. Build observation vector
-        obs = self._build_full_observation(
-            prices, current_positions, portfolio_value, cash,
-        )
-
-        # 6. Run each agent
+        # 3. Run each agent against its own sub-account
         for agent in self._agents:
+            sub = self._sub_accounts.get(agent.name)
+            if sub is None:
+                continue
             try:
-                self._run_agent_bar(
-                    agent, obs, prices, current_positions,
-                    portfolio_value, cash, timestamp,
-                )
+                self._run_agent_bar_independent(agent, sub, prices, timestamp)
             except Exception as e:
                 logger.error("Agent %s bar error: %s", agent.name, e)
                 self._emergency_halt(f"Agent {agent.name} error: {e}")
                 break
 
-    def _run_agent_bar(
+    def _run_agent_bar_independent(
         self,
         agent,
-        obs: np.ndarray,
+        sub: SubAccount,
         prices: dict[str, float],
-        current_positions: dict[str, float],
-        portfolio_value: float,
-        cash: float,
         timestamp: str,
     ) -> None:
-        """Run one bar for a single agent."""
+        """Run one bar for a single agent against its own sub-account."""
+        portfolio_value = sub.portfolio_value(prices)
+        cash = sub.cash
+        current_positions = sub.get_holdings_dict()
+
+        if portfolio_value <= 0:
+            logger.warning("Agent %s portfolio value <= 0, skipping", agent.name)
+            return
+
+        # Build observation from this agent's own portfolio state
+        obs = self._build_full_observation(
+            prices, current_positions, portfolio_value, cash,
+            peak_value=sub.peak_value,
+            initial_cash=sub.initial_capital,
+        )
+
         # Get action from agent
         action = agent.select_action(obs, deterministic=True)
 
-        # Translate continuous action to target positions
-        # action[i] in [-1, 1] = target portfolio weight for ticker i
+        # Translate to orders and apply to sub-account
         orders_placed = []
         action_dict = {}
 
@@ -259,53 +305,67 @@ class ForwardTestRunner:
             if price is None or price <= 0:
                 continue
 
-            # Target shares = action * max_position_pct * portfolio_value / price
+            # Target shares based on this agent's own portfolio value
             target_value = action_val * self._max_position_pct * portfolio_value
             target_shares = math.floor(target_value / price)
 
-            # Current shares
             current_shares = current_positions.get(ticker, 0)
             delta = target_shares - current_shares
 
-            # Only route when delta >= 1 share
             if abs(delta) < 1:
                 continue
 
             side = "BUY" if delta > 0 else "SELL"
             qty = abs(int(delta))
 
-            order = self._broker.place_order(ticker, qty, side)
-            if order:
+            # Apply to sub-account (virtual accounting)
+            fill_result = sub.apply_fill(
+                ticker=ticker,
+                qty=qty,
+                side=side,
+                fill_price=price,
+                commission=0.0,
+            )
+
+            if "error" not in fill_result:
                 order_record = {
                     "ticker": ticker,
                     "side": side,
                     "qty": qty,
                     "expected_price": price,
+                    "fill_price": price,
                     "target_shares": target_shares,
                     "current_shares": current_shares,
+                    "realized_pnl": fill_result.get("realized_pnl", 0),
                 }
                 orders_placed.append(order_record)
 
-                # Track pending order for slippage comparison
-                order_id = order.get("id")
-                if order_id:
-                    self._pending_orders[str(order_id)] = {
-                        "ticker": ticker,
-                        "expected_price": price,
-                        "side": side,
-                        "qty": qty,
-                        "agent": agent.name,
-                        "timestamp": timestamp,
-                    }
+                # Optionally also route through real broker for paper trading
+                if self._route_to_broker:
+                    order = self._broker.place_order(ticker, qty, side)
+                    if order:
+                        order_id = order.get("id")
+                        if order_id:
+                            self._pending_orders[str(order_id)] = {
+                                "ticker": ticker,
+                                "expected_price": price,
+                                "side": side,
+                                "qty": qty,
+                                "agent": agent.name,
+                                "timestamp": timestamp,
+                            }
 
-        # Record to tracker
+        # Update peak value for drawdown tracking
+        sub.update_peak(prices)
+
+        # Record to tracker with sub-account specific values
         self._tracker.record_bar(
             timestamp=timestamp,
             agent_name=agent.name,
             actions=action_dict,
             positions=current_positions,
-            portfolio_value=portfolio_value,
-            cash=cash,
+            portfolio_value=sub.portfolio_value(prices),
+            cash=sub.cash,
             orders_placed=orders_placed,
         )
 
@@ -394,20 +454,27 @@ class ForwardTestRunner:
         positions: dict[str, float],
         portfolio_value: float,
         cash: float,
+        peak_value: float | None = None,
+        initial_cash: float | None = None,
     ) -> np.ndarray:
         """Build observation vector using LiveStateBuilder if available.
 
         Falls back to simplified observation if live state builder
         is not initialized or doesn't have enough data yet.
         """
+        if peak_value is None:
+            peak_value = portfolio_value
+        if initial_cash is None:
+            initial_cash = self._config.get("initial_capital", 10000.0)
+
         if self._live_state_builder is not None and self._live_state_builder.is_ready:
             try:
                 return self._live_state_builder.build(
                     cash=cash,
-                    initial_cash=self._config.get("initial_capital", 10000.0),
+                    initial_cash=initial_cash,
                     holdings=positions,
                     portfolio_value=portfolio_value,
-                    peak_value=portfolio_value,  # Tracked externally
+                    peak_value=peak_value,
                 )
             except Exception as e:
                 logger.debug("LiveStateBuilder.build() failed, using fallback: %s", e)
@@ -447,9 +514,25 @@ class ForwardTestRunner:
         return obs
 
     def _end_of_day(self, date: str) -> None:
-        """Record end-of-day snapshot and check alerts for each agent."""
+        """Record end-of-day snapshot per agent and combined portfolio."""
+        prices = {}
+        for ticker in self._tickers:
+            price = self._broker.get_latest_price(ticker)
+            if price is not None:
+                prices[ticker] = price
+
+        combined_value = 0.0
+
         for agent in self._agents:
+            sub = self._sub_accounts.get(agent.name)
             metrics = self._tracker.get_metrics(agent.name)
+
+            # Merge sub-account snapshot into metrics
+            if sub:
+                snapshot = sub.get_snapshot(prices)
+                metrics.update(snapshot)
+                combined_value += sub.portfolio_value(prices)
+
             self._tracker.record_daily_snapshot(date, agent.name, metrics)
 
             # Check alert thresholds
@@ -462,6 +545,17 @@ class ForwardTestRunner:
                     self._alert_manager.check_and_alert(agent.name, metrics, thresholds)
                 except Exception as e:
                     logger.debug("Alert check failed: %s", e)
+
+        # Record combined portfolio snapshot
+        self._tracker.record_event("combined_daily_snapshot", {
+            "date": date,
+            "combined_portfolio_value": round(combined_value, 2),
+            "sub_accounts": {
+                a.name: self._sub_accounts[a.name].get_snapshot(prices)
+                for a in self._agents
+                if a.name in self._sub_accounts
+            },
+        })
 
     def _produce_final_report(self) -> dict:
         """Produce the final graduation report."""
@@ -479,10 +573,32 @@ class ForwardTestRunner:
         if slippage_stats:
             report["slippage_stats"] = slippage_stats
 
+        # Add sub-account summaries
+        prices = {}
+        for ticker in self._tickers:
+            price = self._broker.get_latest_price(ticker)
+            if price is not None:
+                prices[ticker] = price
+
+        report["sub_accounts"] = {
+            name: sub.get_snapshot(prices)
+            for name, sub in self._sub_accounts.items()
+        }
+
+        # Combined portfolio value
+        combined = sum(sub.portfolio_value(prices) for sub in self._sub_accounts.values())
+        initial_total = sum(sub.initial_capital for sub in self._sub_accounts.values())
+        report["combined_portfolio"] = {
+            "value": round(combined, 2),
+            "initial_capital": round(initial_total, 2),
+            "total_return": round((combined - initial_total) / max(initial_total, 1e-8), 6),
+        }
+
         self._tracker.record_event("forward_test_complete", {
             "days_completed": self._day_count,
             "report_summary": report.get("summary", ""),
             "slippage_stats": slippage_stats,
+            "combined_portfolio": report["combined_portfolio"],
         })
 
         # Save final state

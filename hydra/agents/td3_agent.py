@@ -155,7 +155,12 @@ class TD3Agent(BaseRLAgent):
         logger.info(f"Saved TD3 agent '{self.name}' to {path}")
 
     def load(self, path: str | Path) -> None:
+        """Load TD3 model from disk.
+
+        Always loads on CPU first to avoid DirectML device comparison
+        bugs in SB3's load().
+        """
         from stable_baselines3 import TD3
 
-        device = _resolve_sb3_device(self._device)
-        self._model = TD3.load(str(path), device=device)
+        self._model = TD3.load(str(path), device="cpu")
+        logger.info(f"Loaded TD3 agent '{self.name}' from {path} (device=cpu)")

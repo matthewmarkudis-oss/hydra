@@ -212,48 +212,20 @@ class Contrarian(BaseCorpAgent):
         return "\n".join(lines)
 
     def _call_llm(self, user_prompt: str) -> dict | None:
-        """Call the LLM for adversarial analysis."""
-        try:
-            import anthropic
-        except ImportError:
-            logger.debug("anthropic not installed, using rule-based fallback")
+        """Call the LLM for adversarial analysis (Groq free tier or Anthropic)."""
+        from corp.llm_client import call_llm_json
+
+        parsed = call_llm_json(SYSTEM_PROMPT, user_prompt, max_tokens=1200, temperature=0.4)
+        if parsed is None:
             return None
 
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            logger.debug("No ANTHROPIC_API_KEY, using rule-based fallback")
-            return None
-
-        try:
-            client = anthropic.Anthropic(api_key=api_key)
-            response = client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=1200,
-                temperature=0.4,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-
-            text = response.content[0].text.strip()
-            if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-
-            parsed = json.loads(text)
-
-            return {
-                "verdict": parsed.get("verdict", "inconclusive"),
-                "concerns": parsed.get("concerns", []),
-                "stress_test_config": parsed.get("stress_test_config"),
-                "recommendation": parsed.get("recommendation", ""),
-                "fragility_score": min(max(parsed.get("fragility_score", 0.5), 0.0), 1.0),
-            }
-
-        except Exception as e:
-            logger.warning(f"LLM call failed: {e}")
-            return None
+        return {
+            "verdict": parsed.get("verdict", "inconclusive"),
+            "concerns": parsed.get("concerns", []),
+            "stress_test_config": parsed.get("stress_test_config"),
+            "recommendation": parsed.get("recommendation", ""),
+            "fragility_score": min(max(parsed.get("fragility_score", 0.5), 0.0), 1.0),
+        }
 
     def _rule_based_scrutiny(
         self, pipeline_results: dict, config_dict: dict

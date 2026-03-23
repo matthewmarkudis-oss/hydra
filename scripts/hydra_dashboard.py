@@ -232,6 +232,14 @@ def get_dashboard_data():
                 agent_sparklines[agent_name] = []
             agent_sparklines[agent_name].append(score_val)
 
+    # Forward-test allocations from corp state
+    ft_allocations = []
+    if corp_state:
+        for p in corp_state.get("proposals", []):
+            if isinstance(p, dict) and p.get("type") == "graduation":
+                ft_allocations = p.get("allocations", [])
+                break
+
     # Corporation state: regime, portfolio value
     regime_str = "Unknown"
     portfolio_value = 0.0
@@ -375,6 +383,7 @@ def get_dashboard_data():
             for name, c in latest_conviction.items()
         },
         "latest_eval_scores": latest_eval_scores,
+        "ft_allocations": ft_allocations,
     }
 
 
@@ -806,7 +815,7 @@ tr:hover td { background: rgba(200,169,81,0.05); }
   <!-- ═══ CHARTS ROW 1: Reward Trend + Agent Weights ═══════════════════ -->
   <div class="grid-2">
     <div class="card">
-      <div class="card-header">Performance: Mean vs Best Agent</div>
+      <div class="card-header">Performance: Individual Agents</div>
       <div class="chart-wrap"><canvas id="reward-chart"></canvas></div>
     </div>
     <div class="card">
@@ -1145,44 +1154,52 @@ function updateScorecard(scorecard) {
 // ═══════════════════════════════════════════════════════════════════
 // Reward Trend Chart
 // ═══════════════════════════════════════════════════════════════════
-function updateRewardChart(rewards, bestScores, prevRunBest) {
+function updateRewardChart(rewards, bestScores, prevRunBest, agentSparklines) {
   if (rewardChart) { rewardChart.destroy(); rewardChart = null; }
   const el = document.getElementById('reward-chart');
   if (!rewards || rewards.length === 0) return;
 
   const labels = rewards.map(function(_, i) { return 'Gen ' + (i + 1); });
-  const improving = rewards[rewards.length - 1] > rewards[0];
+  var datasets = [];
 
-  var datasets = [{
-    label: 'Mean Reward',
-    data: rewards,
-    borderColor: improving ? GREEN : RED,
-    backgroundColor: improving ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-    borderWidth: 2,
-    fill: true,
-    tension: 0.3,
-    pointRadius: 0,
-    datalabels: {
-      display: function(ctx) {
-        return ctx.dataIndex === ctx.dataset.data.length - 1;
-      },
-      color: improving ? GREEN : RED,
-      anchor: 'end', align: 'left',
-      font: { size: 10, weight: 600 },
-      formatter: function(v) { return 'Avg ' + v.toFixed(0); }
+  // Per-agent individual lines from sparklines
+  if (agentSparklines && Object.keys(agentSparklines).length > 0) {
+    var agentNames = Object.keys(agentSparklines).sort();
+    for (var ai = 0; ai < agentNames.length; ai++) {
+      var aName = agentNames[ai];
+      var aData = agentSparklines[aName];
+      var aColor = CHART_COLORS[ai % CHART_COLORS.length];
+      // Pad data to match labels length (agent may not exist in early gens)
+      var paddedData = [];
+      var startIdx = labels.length - aData.length;
+      for (var pi = 0; pi < labels.length; pi++) {
+        if (pi < startIdx) paddedData.push(null);
+        else paddedData.push(aData[pi - startIdx]);
+      }
+      datasets.push({
+        label: aName,
+        data: paddedData,
+        borderColor: aColor,
+        borderWidth: 1.5,
+        fill: false,
+        tension: 0.3,
+        pointRadius: 0,
+        spanGaps: false,
+        datalabels: { display: false }
+      });
     }
-  }];
+  }
 
+  // Best agent envelope (gold dashed)
   if (bestScores && bestScores.length > 0) {
-    var bestImproving = bestScores[bestScores.length - 1] > bestScores[0];
     datasets.push({
       label: 'Best Agent',
       data: bestScores,
       borderColor: GOLD,
       backgroundColor: 'rgba(200,169,81,0.08)',
-      borderWidth: 2,
+      borderWidth: 2.5,
       borderDash: [5, 3],
-      fill: true,
+      fill: false,
       tension: 0.3,
       pointRadius: 0,
       datalabels: {
@@ -1199,13 +1216,11 @@ function updateRewardChart(rewards, bestScores, prevRunBest) {
 
   // Previous run's best agent line (reference from last completed run)
   if (prevRunBest && prevRunBest.length > 0) {
-    // Pad or trim to match current run's generation count
     var prevData = [];
     for (var i = 0; i < labels.length; i++) {
       if (i < prevRunBest.length) {
         prevData.push(prevRunBest[i]);
       } else {
-        // Extend with last known value as flat reference
         prevData.push(prevRunBest[prevRunBest.length - 1]);
       }
     }
@@ -1320,6 +1335,14 @@ function renderAgentTable(d) {
   var conviction = d.latest_conviction || {};
   var validation = d.validation || {};
   var sparklines = d.agent_sparklines || {};
+  var ftAllocs = d.ft_allocations || [];
+
+  // Build allocation lookup
+  var allocLookup = {};
+  for (var ai = 0; ai < ftAllocs.length; ai++) {
+    var a = ftAllocs[ai];
+    allocLookup[a.agent_name || ''] = a;
+  }
 
   // Merge all known agent names from live data
   var agentNames = {};
@@ -1337,8 +1360,10 @@ function renderAgentTable(d) {
     return;
   }
 
+  var hasAllocs = ftAllocs.length > 0;
   var html = '<table><thead><tr>' +
     '<th>Agent</th><th class="num">Eval Score</th><th class="num">Win Rate</th>' +
+    (hasAllocs ? '<th class="num">Allocation</th>' : '') +
     '<th class="num">Gens</th><th class="num">W/L</th><th>Trend</th>' +
     '</tr></thead><tbody>';
 
@@ -1355,10 +1380,22 @@ function renderAgentTable(d) {
     var sparkData = sparklines[name] || [];
     var scoreClass = score != null && score > 0 ? ' style="color:#15803D"' : '';
 
+    var allocCell = '';
+    if (hasAllocs) {
+      var alloc = allocLookup[name];
+      if (alloc) {
+        allocCell = '<td class="num" style="color:var(--gold)">' +
+          (alloc.weight * 100).toFixed(0) + '% ($' + alloc.capital.toFixed(0) + ')</td>';
+      } else {
+        allocCell = '<td class="num clr-muted">--</td>';
+      }
+    }
+
     html += '<tr>' +
       '<td class="fw-600 clr-navy">' + name + '</td>' +
       '<td class="num"' + scoreClass + '>' + fmtNum(score, 1) + '</td>' +
       '<td class="num">' + fmtPct(wr) + '</td>' +
+      allocCell +
       '<td class="num clr-muted">' + trades + '</td>' +
       '<td class="num clr-muted">' + wins + '/' + losses + '</td>' +
       '<td><canvas id="spark-' + i + '" width="60" height="20" data-spark=\'' + JSON.stringify(sparkData) + '\'></canvas></td>' +
@@ -1731,7 +1768,7 @@ async function refresh() {
     updateScorecard(d.scorecard);
 
     // Charts
-    if (d.hero && d.hero.reward_trend) updateRewardChart(d.hero.reward_trend, d.hero.best_score_history, d.hero.prev_run_best);
+    if (d.hero && d.hero.reward_trend) updateRewardChart(d.hero.reward_trend, d.hero.best_score_history, d.hero.prev_run_best, d.agent_sparklines);
     updateWeightsChart(d.generations);
     updateEquityChart(d.benchmark, d.validation);
     updateTradesChart(d.generations);

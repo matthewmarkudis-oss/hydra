@@ -169,56 +169,30 @@ class InnovationScout(BaseCorpAgent):
         return result
 
     def _llm_scout(self, focus_areas: list[str]) -> dict | None:
-        """Use LLM to generate tool recommendations."""
-        try:
-            import anthropic
-        except ImportError:
+        """Use LLM to generate tool recommendations (Groq free tier or Anthropic)."""
+        from corp.llm_client import call_llm_json
+
+        focus_text = "\n".join(f"- {area}" for area in focus_areas)
+        user_prompt = (
+            "Search your knowledge for the latest tools, libraries, and "
+            "techniques relevant to these areas:\n\n"
+            f"{focus_text}\n\n"
+            "Focus on Python tools compatible with:\n"
+            "- PyTorch 2.x\n"
+            "- Stable-Baselines3\n"
+            "- Windows + AMD GPU (DirectML)\n"
+            "- VectorBT for backtesting validation\n\n"
+            "Provide 3-5 recommendations, prioritized by impact."
+        )
+
+        parsed = call_llm_json(SYSTEM_PROMPT, user_prompt, max_tokens=1500, temperature=0.5)
+        if parsed is None:
             return None
 
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            return None
-
-        try:
-            focus_text = "\n".join(f"- {area}" for area in focus_areas)
-            user_prompt = (
-                "Search your knowledge for the latest tools, libraries, and "
-                "techniques relevant to these areas:\n\n"
-                f"{focus_text}\n\n"
-                "Focus on Python tools compatible with:\n"
-                "- PyTorch 2.x\n"
-                "- Stable-Baselines3\n"
-                "- Windows + AMD GPU (DirectML)\n"
-                "- VectorBT for backtesting validation\n\n"
-                "Provide 3-5 recommendations, prioritized by impact."
-            )
-
-            client = anthropic.Anthropic(api_key=api_key)
-            response = client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=1500,
-                temperature=0.5,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-
-            text = response.content[0].text.strip()
-            if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-
-            parsed = json.loads(text)
-
-            return {
-                "briefs": parsed.get("briefs", []),
-                "top_recommendation": parsed.get("top_recommendation"),
-            }
-
-        except Exception as e:
-            logger.warning(f"LLM scout failed: {e}")
-            return None
+        return {
+            "briefs": parsed.get("briefs", []),
+            "top_recommendation": parsed.get("top_recommendation"),
+        }
 
     def _static_recommendations(self) -> list[dict]:
         """Fallback static list of known useful tools."""

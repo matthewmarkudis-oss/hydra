@@ -270,9 +270,13 @@ class PPOAgent(BaseRLAgent):
         logger.info(f"Saved PPO agent '{self.name}' to {path}")
 
     def load(self, path: str | Path) -> None:
-        """Load PPO model from disk."""
+        """Load PPO model from disk.
+
+        Always loads on CPU first to avoid DirectML device comparison
+        bugs in SB3's load() ('>=' not supported between 'torch.device'
+        and 'int'). Training/inference will run on CPU after resume.
+        """
         from stable_baselines3 import PPO
 
-        device = _resolve_sb3_device(self._device)
-        self._model = PPO.load(str(path), device=device)
-        logger.info(f"Loaded PPO agent '{self.name}' from {path}")
+        self._model = PPO.load(str(path), device="cpu")
+        logger.info(f"Loaded PPO agent '{self.name}' from {path} (device=cpu)")

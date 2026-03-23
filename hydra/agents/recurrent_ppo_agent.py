@@ -203,10 +203,13 @@ class RecurrentPPOAgent(BaseRLAgent):
         logger.info(f"Saved RecurrentPPO agent '{self.name}' to {path}")
 
     def load(self, path: str | Path) -> None:
-        """Load RecurrentPPO model from disk."""
+        """Load RecurrentPPO model from disk.
+
+        Always loads on CPU first to avoid DirectML device comparison
+        bugs in SB3's load().
+        """
         from sb3_contrib import RecurrentPPO
 
-        device = _resolve_sb3_device(self._device)
-        self._model = RecurrentPPO.load(str(path), device=device)
+        self._model = RecurrentPPO.load(str(path), device="cpu")
         self._lstm_states = None
-        logger.info(f"Loaded RecurrentPPO agent '{self.name}' from {path}")
+        logger.info(f"Loaded RecurrentPPO agent '{self.name}' from {path} (device=cpu)")

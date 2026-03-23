@@ -166,6 +166,26 @@ class DifferentialSharpeReward:
 
         return total_reward, info
 
+    def get_params(self) -> dict[str, float]:
+        """Return current tunable reward parameters."""
+        return {
+            "drawdown_penalty": float(self.drawdown_penalty),
+            "transaction_penalty": float(self.transaction_penalty),
+            "holding_penalty": float(self.holding_penalty),
+            "pnl_bonus_weight": float(self.pnl_bonus_weight),
+            "reward_scale": float(self.reward_scale),
+        }
+
+    def update_params(self, params: dict[str, float]) -> None:
+        """Update tunable reward parameters in-place.
+
+        Only updates keys that exist as attributes. Ignores unknown keys.
+        """
+        for key in ("drawdown_penalty", "transaction_penalty", "holding_penalty",
+                     "pnl_bonus_weight", "reward_scale"):
+            if key in params:
+                setattr(self, key, np.float32(params[key]))
+
     @property
     def peak_value(self) -> float:
         return float(self._peak_value)

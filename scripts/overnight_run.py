@@ -25,6 +25,19 @@ HYDRA_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(HYDRA_ROOT))
 sys.path.insert(0, str(HYDRA_ROOT.parent))  # TradingAgents parent
 
+# Load all API keys (NewsAPI, Finnhub, Anthropic, Alpaca) from .env
+_env_path = HYDRA_ROOT.parent / "trading_agents" / ".env"
+if _env_path.exists():
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _, _v = _line.partition("=")
+            _k, _v = _k.strip(), _v.strip()
+            if _k and _v and _k not in os.environ:
+                os.environ[_k] = _v
+
 from hydra.config.schema import HydraConfig
 from corp.agents.generation_scorer import score_generation, format_scorecard
 

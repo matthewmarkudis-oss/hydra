@@ -24,6 +24,19 @@ _ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT.parent))
 
+# Load API keys from .env
+_env_path = _ROOT.parent / "trading_agents" / ".env"
+if _env_path.exists():
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _, _v = _line.partition("=")
+            _k, _v = _k.strip(), _v.strip()
+            if _k and _v and _k not in os.environ:
+                os.environ[_k] = _v
+
 from hydra.config.schema import HydraConfig
 from corp.state.corporation_state import CorporationState
 from corp.state.config_blacklist import ConfigBlacklist
@@ -981,11 +994,14 @@ def main() -> None:
         run_simple_mode()
         return
 
-    # Try agentic mode
+    # Try agentic mode (requires anthropic SDK for streaming/tool use)
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        print(f"\n  {_c('No ANTHROPIC_API_KEY found. Falling back to simple mode.', YELLOW)}")
-        print(f"  {_c('Set the env var or use --simple explicitly.', DIM)}\n")
+        groq_key = os.environ.get("GROQ_API_KEY", "")
+        if groq_key:
+            print(f"\n  {_c('Groq API key found — corp agents will use Llama 3.3.', DIM)}")
+        print(f"\n  {_c('No ANTHROPIC_API_KEY — using simple mode for CEO CLI.', YELLOW)}")
+        print(f"  {_c('(Corp agents still use Groq/rule-based for analysis.)', DIM)}\n")
         run_simple_mode()
         return
 

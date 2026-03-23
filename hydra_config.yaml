@@ -1,0 +1,148 @@
+env:
+  num_stocks: 10
+  episode_bars: 390
+  bar_interval_minutes: 5
+  initial_cash: 2500.0
+  transaction_cost_bps: 5.0
+  slippage_bps: 2.0
+  spread_bps: 1.0
+  max_position_pct: 0.3
+  max_drawdown_pct: 0.2
+  max_daily_loss_pct: 0.05
+  normalize_obs: true
+reward:
+  sharpe_window: 20
+  sharpe_eta: 0.196
+  drawdown_penalty: 1.288
+  transaction_penalty: 0.557
+  holding_penalty: 1.090
+  pnl_bonus_weight: 3.863
+  reward_scale: 255.0
+pool:
+  agents:
+  - agent_type: ppo
+    learning_rate: 0.0003
+    batch_size: 64
+    gamma: 0.99
+    n_steps: 2048
+    ent_coef: 0.01
+    clip_range: 0.2
+    buffer_size: 100000
+    tau: 0.005
+    frozen: false
+    checkpoint_path: null
+    rule_agent_class: null
+  - agent_type: td3
+    learning_rate: 0.0003
+    batch_size: 256
+    gamma: 0.99
+    policy_delay: 2
+    target_policy_noise: 0.2
+    target_noise_clip: 0.5
+    buffer_size: 100000
+    tau: 0.005
+    frozen: false
+    checkpoint_path: null
+    rule_agent_class: null
+  - agent_type: static
+    learning_rate: 0.0003
+    batch_size: 64
+    gamma: 0.99
+    n_steps: 2048
+    ent_coef: 0.01
+    clip_range: 0.2
+    buffer_size: 100000
+    tau: 0.005
+    frozen: true
+    checkpoint_path: null
+    rule_agent_class: null
+  - agent_type: static
+    learning_rate: 0.0003
+    batch_size: 64
+    gamma: 0.99
+    n_steps: 2048
+    ent_coef: 0.01
+    clip_range: 0.2
+    buffer_size: 100000
+    tau: 0.005
+    frozen: true
+    checkpoint_path: null
+    rule_agent_class: null
+  - agent_type: rule_based
+    learning_rate: 0.0003
+    batch_size: 64
+    gamma: 0.99
+    n_steps: 2048
+    ent_coef: 0.01
+    clip_range: 0.2
+    buffer_size: 100000
+    tau: 0.005
+    frozen: false
+    checkpoint_path: null
+    rule_agent_class: alpha_momentum.AlphaMomentum
+  - agent_type: rule_based
+    learning_rate: 0.0003
+    batch_size: 64
+    gamma: 0.99
+    n_steps: 2048
+    ent_coef: 0.01
+    clip_range: 0.2
+    buffer_size: 100000
+    tau: 0.005
+    frozen: false
+    checkpoint_path: null
+    rule_agent_class: beta_mean_reversion.BetaMeanReversion
+  action_aggregation: weighted_mean
+  equal_weights: true
+training:
+  total_timesteps: 500000
+  eval_interval: 10000
+  checkpoint_interval: 50000
+  num_generations: 30
+  episodes_per_generation: 100
+  top_k_promote: 2
+  bottom_k_demote: 3
+  max_pool_size: 20
+  tensorboard_log_dir: logs/tensorboard
+  checkpoint_dir: checkpoints
+compute:
+  prefer_gpu: true
+  cpu_workers: 6
+  gpu_memory_limit_gb: 12.0
+  fallback_to_cpu: true
+data:
+  tickers:
+  - NVDA
+  - TSLA
+  - AMD
+  - MARA
+  - COIN
+  - META
+  - AMZN
+  - GOOGL
+  - NFLX
+  - SQ
+  cache_dir: data/cache
+  feature_cache_format: npy
+  lookback_days: 252
+validation:
+  bootstrap_samples: 2000
+  confidence_level: 0.95
+  min_sharpe: 0.3
+  max_drawdown_pct: 0.25
+  min_win_rate: 0.4
+  min_profit_factor: 1.1
+  walk_forward_windows: 4
+  min_wfe: 0.4
+forward_test:
+  enabled: false
+  duration_days: 20
+  max_agents: 3
+  initial_capital: 10000.0
+  max_position_pct: 0.20
+  sharpe_retention_min: 0.50
+  drawdown_tolerance: 1.5
+  win_rate_tolerance: 0.80
+  poll_interval_minutes: 5
+seed: 42
+log_level: INFO

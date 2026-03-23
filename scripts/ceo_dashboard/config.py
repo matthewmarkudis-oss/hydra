@@ -18,26 +18,47 @@ REFRESH_INTERVAL_MS = 60_000  # 60 seconds
 # State file paths
 TRAINING_STATE_FILE = "logs/hydra_training_state.json"
 CORP_STATE_FILE = "logs/corporation_state.json"
+FORWARD_TEST_LOG_FILE = "logs/forward_test/forward_test_log.jsonl"
+FORWARD_TEST_STATE_FILE = "logs/forward_test/forward_test_state.json"
 
-# Color palette
+# Color palette — Navy + Gold theme (matches HYDRACORP Executive Dashboard)
 COLORS = {
-    "green": "#00C853",
-    "red": "#FF1744",
-    "amber": "#FFD600",
-    "blue": "#2979FF",
-    "orange": "#FF9100",
-    "gray": "#616161",
-    "white": "#FAFAFA",
-    "bg_dark": "#0F1117",
-    "bg_card": "#1E1E2E",
+    "green": "#22C55E",
+    "red": "#EF4444",
+    "amber": "#F59E0B",
+    "blue": "#3B82F6",
+    "orange": "#FB923C",
+    "gray": "#7B8BA5",
+    "white": "#E8ECF2",
+    "bg_dark": "#0B1120",
+    "bg_card": "#131B2E",
+    "navy": "#1B2A4A",
+    "navy_light": "#243558",
+    "navy_dark": "#111D35",
+    "gold": "#C8A951",
+    "gold_light": "#D4BC72",
+    "card_border": "#1E2A42",
+    "text_muted": "#7B8BA5",
+    "purple": "#A78BFA",
+    "pink": "#F472B6",
+    "cyan": "#06B6D4",
 }
+
+# Chart colors matching 5010 dashboard
+CHART_COLORS = [
+    "#C8A951", "#3B82F6", "#22C55E", "#A78BFA",
+    "#F472B6", "#FB923C", "#06B6D4", "#E879F9",
+    "#22D3EE", "#FBBF24",
+]
 
 # Friendly agent names
 FRIENDLY_NAMES = {
     "ppo_0": "AI Alpha",
     "ppo_1": "AI Alpha-2",
+    "ppo_2": "AI Alpha-3",
     "sac_0": "AI Beta",
     "sac_1": "AI Beta-2",
+    "td3_1": "AI Delta",
     "rppo_0": "AI Gamma",
     "rppo_1": "AI Gamma-2",
     "alpha_rule": "Momentum Strategy",

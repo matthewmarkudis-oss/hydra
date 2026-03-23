@@ -8,10 +8,10 @@ from pydantic import BaseModel, Field
 class LLMConfig(BaseModel):
     """LLM provider configuration."""
 
-    provider: str = Field(default="anthropic", description="anthropic | ollama")
-    routine_model: str = Field(default="claude-3-haiku-20240307")
-    strategic_model: str = Field(default="claude-sonnet-4-20250514")
-    api_key_env: str = Field(default="ANTHROPIC_API_KEY")
+    provider: str = Field(default="auto", description="auto | groq | anthropic — auto tries groq first (free)")
+    routine_model: str = Field(default="llama-3.3-70b-versatile")
+    strategic_model: str = Field(default="llama-3.3-70b-versatile")
+    api_key_env: str = Field(default="GROQ_API_KEY")
     max_tokens_per_call: int = Field(default=2000, ge=100)
     monthly_budget_usd: float = Field(default=10.0, gt=0)
     temperature: float = Field(default=0.3, ge=0, le=1)

@@ -250,66 +250,25 @@ class HedgeFundDirector(BaseCorpAgent):
         return "\n".join(lines)
 
     def _call_llm(self, user_prompt: str) -> dict | None:
-        """Call the LLM for analysis. Returns parsed JSON or None on failure."""
-        try:
-            import anthropic
-        except ImportError:
-            logger.debug("anthropic package not installed, using rule-based fallback")
+        """Call the LLM for analysis (Groq free tier or Anthropic)."""
+        from corp.llm_client import call_llm_json
+
+        parsed = call_llm_json(SYSTEM_PROMPT, user_prompt, max_tokens=1500, temperature=0.3)
+        if parsed is None:
             return None
 
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            logger.debug("No ANTHROPIC_API_KEY set, using rule-based fallback")
+        # Validate required fields
+        if "proposed_patch" not in parsed:
+            logger.warning("LLM response missing proposed_patch")
             return None
 
-        try:
-            client = anthropic.Anthropic(api_key=api_key)
-
-            # Select model
-            if self._model == "strategic":
-                model = "claude-sonnet-4-20250514"
-            else:
-                model = "claude-3-haiku-20240307"
-
-            response = client.messages.create(
-                model=model,
-                max_tokens=1500,
-                temperature=0.3,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-
-            # Parse JSON from response
-            text = response.content[0].text.strip()
-
-            # Handle markdown code blocks
-            if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-
-            parsed = json.loads(text)
-
-            # Validate required fields
-            if "proposed_patch" not in parsed:
-                logger.warning("LLM response missing proposed_patch")
-                return None
-
-            return {
-                "memo": parsed.get("memo", ""),
-                "proposed_patch": parsed["proposed_patch"],
-                "confidence": min(max(parsed.get("confidence", 0.5), 0.0), 1.0),
-                "risk_assessment": parsed.get("risk_assessment", "medium"),
-                "expected_improvement": parsed.get("expected_improvement", ""),
-            }
-
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM response as JSON: {e}")
-            return None
-        except Exception as e:
-            logger.warning(f"LLM call failed: {e}")
-            return None
+        return {
+            "memo": parsed.get("memo", ""),
+            "proposed_patch": parsed["proposed_patch"],
+            "confidence": min(max(parsed.get("confidence", 0.5), 0.0), 1.0),
+            "risk_assessment": parsed.get("risk_assessment", "medium"),
+            "expected_improvement": parsed.get("expected_improvement", ""),
+        }
 
     def _rule_based_analysis(
         self, pipeline_results: dict, config_dict: dict

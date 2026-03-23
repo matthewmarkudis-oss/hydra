@@ -31,7 +31,7 @@ YOU DO NOT GENERATE TRADE SIGNALS. You only influence training config parameters
 
 OUTPUT FORMAT — respond with valid JSON only:
 {
-  "regime": "risk_on | risk_off | crisis",
+  "regime": "risk_on | risk_off | crisis | antifragile",
   "volatility_outlook": "low | stable | elevated | extreme",
   "sector_bias": {
     "tech": -1.0 to 1.0,
@@ -68,6 +68,11 @@ REGIME DEFINITIONS:
 - risk_on: Markets bullish, low VIX, positive economic data. Train with normal parameters.
 - risk_off: Uncertainty rising, moderate VIX, mixed data. Tighten drawdown limits, increase penalties.
 - crisis: Black swan events, high VIX, market panic. Maximum conservatism, minimal position sizes.
+- antifragile: High volatility with identifiable asymmetric opportunities. Wars, oil shocks, sector
+  disruptions, tariff escalation — situations where specific sectors surge while others crash.
+  Use this when there is chaos BUT clear directional signals (e.g., energy up during oil crisis,
+  defense up during conflict). Trains agents to protect capital tightly while swinging hard on
+  high-conviction asymmetric bets. Inspired by Taleb's barbell strategy.
 """
 
 
@@ -288,56 +293,30 @@ class GeopoliticsExpert(BaseCorpAgent):
         return headlines
 
     def _analyze_headlines(self, headlines: list[dict]) -> dict | None:
-        """Analyze headlines with LLM."""
-        try:
-            import anthropic
-        except ImportError:
+        """Analyze headlines with LLM (Groq free tier or Anthropic)."""
+        from corp.llm_client import call_llm_json
+
+        headline_text = "\n".join(
+            f"- [{h['source']}] {h['title']}" for h in headlines[:30]
+        )
+        user_prompt = (
+            "Analyze these recent financial headlines and classify the "
+            "current macro regime:\n\n" + headline_text
+        )
+
+        parsed = call_llm_json(SYSTEM_PROMPT, user_prompt, max_tokens=800, temperature=0.2)
+        if parsed is None:
             return None
 
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            return None
-
-        try:
-            headline_text = "\n".join(
-                f"- [{h['source']}] {h['title']}" for h in headlines[:30]
-            )
-            user_prompt = (
-                "Analyze these recent financial headlines and classify the "
-                "current macro regime:\n\n" + headline_text
-            )
-
-            client = anthropic.Anthropic(api_key=api_key)
-            response = client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=800,
-                temperature=0.2,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-
-            text = response.content[0].text.strip()
-            if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-
-            parsed = json.loads(text)
-
-            return {
-                "regime": parsed.get("regime", "risk_on"),
-                "volatility_outlook": parsed.get("volatility_outlook", "stable"),
-                "sector_bias": parsed.get("sector_bias", {}),
-                "confidence": min(max(parsed.get("confidence", 0.5), 0.0), 1.0),
-                "summary": parsed.get("summary", ""),
-                "config_suggestions": parsed.get("config_suggestions"),
-                "ticker_recommendations": parsed.get("ticker_recommendations", {}),
-            }
-
-        except Exception as e:
-            logger.warning(f"LLM analysis failed: {e}")
-            return None
+        return {
+            "regime": parsed.get("regime", "risk_on"),
+            "volatility_outlook": parsed.get("volatility_outlook", "stable"),
+            "sector_bias": parsed.get("sector_bias", {}),
+            "confidence": min(max(parsed.get("confidence", 0.5), 0.0), 1.0),
+            "summary": parsed.get("summary", ""),
+            "config_suggestions": parsed.get("config_suggestions"),
+            "ticker_recommendations": parsed.get("ticker_recommendations", {}),
+        }
 
     def _rule_based_classification(self, headlines: list[dict]) -> dict[str, Any]:
         """Simple keyword-based regime classification."""
@@ -384,6 +363,22 @@ class GeopoliticsExpert(BaseCorpAgent):
             regime = "risk_on"
             vol = "low" if risk_on_count > 5 else "stable"
             confidence = min(0.3 + risk_on_count * 0.05, 0.7)
+
+        # Upgrade to antifragile when there's volatility WITH clear sector signals
+        # (chaos + identifiable asymmetric opportunities = antifragile, not just crisis)
+        if total >= 3:
+            sector_words = {
+                "energy": ["oil", "opec", "pipeline", "drilling", "energy", "crude"],
+                "defense": ["war", "military", "defense", "missile", "conflict", "nato"],
+            }
+            sector_signal_count = sum(
+                1 for words in sector_words.values()
+                for w in words if w in text
+            )
+            if regime in ("crisis", "risk_off") and sector_signal_count >= 3:
+                regime = "antifragile"
+                vol = "elevated"
+                confidence = min(confidence + 0.1, 0.8)
 
         # Rule-based ticker recommendations based on keyword signals
         ticker_recs: dict[str, Any] = {

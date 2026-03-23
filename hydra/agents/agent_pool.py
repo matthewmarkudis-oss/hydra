@@ -234,6 +234,7 @@ class AgentPool:
         self._weights = metadata.get("weights", {})
         self._rankings = metadata.get("rankings", {})
 
+        failed_agents = []
         for name, info in metadata.get("agents", {}).items():
             agent_dir = directory / name
             agent_type = info["type"]
@@ -250,8 +251,30 @@ class AgentPool:
                     agent.freeze()
                 self._agents[name] = agent
             except Exception as e:
-                logger.warning(f"Failed to load agent '{name}': {e}")
+                logger.warning(
+                    f"Primary load failed for agent '{name}' ({agent_type}): {e}. "
+                    f"Attempting CPU-only fallback..."
+                )
+                # CPU fallback retry — handles DirectML/device comparison bugs
+                try:
+                    agent = self._create_agent(agent_type, name, obs_dim, action_dim, **extra)
+                    agent.load(agent_dir / "model")  # agents already use device="cpu" internally
+                    if info.get("frozen", False):
+                        agent.freeze()
+                    self._agents[name] = agent
+                    logger.info(f"CPU fallback succeeded for agent '{name}'")
+                except Exception as e2:
+                    logger.error(
+                        f"CHECKPOINT LOAD FAILED for agent '{name}' ({agent_type}): {e2}. "
+                        f"Learned weights from this agent will be LOST."
+                    )
+                    failed_agents.append(name)
 
+        if failed_agents:
+            logger.error(
+                f"Failed to load {len(failed_agents)}/{len(metadata.get('agents', {}))} "
+                f"agents: {failed_agents}. Training may restart from scratch."
+            )
         logger.info(f"Loaded agent pool ({self.size} agents) from {directory}")
 
     @staticmethod

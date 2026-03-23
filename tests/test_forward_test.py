@@ -319,18 +319,19 @@ class TestSlippageTracking:
             log_path="logs/test_pending.jsonl",
             state_path="logs/test_pending_state.json",
         )
+        # route_to_broker=True so orders also go through real broker
         runner = ForwardTestRunner(
             agents=[agent],
             broker=broker,
             data_provider=MagicMock(),
             tickers=["AAPL"],
-            config={"initial_capital": 10000},
+            config={"initial_capital": 10000, "route_to_broker": True},
             tracker=tracker,
         )
 
         runner._run_bar("2024-01-15T10:00:00")
 
-        # Should have a pending order tracked
+        # Should have a pending order tracked (broker-routed)
         assert "order123" in runner._pending_orders
         assert runner._pending_orders["order123"]["expected_price"] == 100.0
 

@@ -29,10 +29,10 @@ class RewardConfig(BaseModel):
 
     sharpe_window: int = Field(default=20, ge=2)
     sharpe_eta: float = Field(default=0.05, gt=0, description="Differential Sharpe EMA decay")
-    drawdown_penalty: float = Field(default=0.5, ge=0)
-    transaction_penalty: float = Field(default=0.1, ge=0)
-    holding_penalty: float = Field(default=0.1, ge=0, description="Penalty for large/idle positions")
-    pnl_bonus_weight: float = Field(default=1.0, ge=0, description="Weight for direct P&L return bonus")
+    drawdown_penalty: float = Field(default=0.3, ge=0)
+    transaction_penalty: float = Field(default=0.02, ge=0)
+    holding_penalty: float = Field(default=0.05, ge=0, description="Penalty for large/idle positions")
+    pnl_bonus_weight: float = Field(default=4.0, ge=0, description="Weight for direct P&L return bonus")
     reward_scale: float = Field(default=100.0, gt=0, description="Multiplier for reward signal magnitude")
 
 
@@ -81,6 +81,9 @@ class TrainingConfig(BaseModel):
     max_pool_size: int = Field(default=20, ge=5, description="Max agents in pool; excess demoted after promotion")
     tensorboard_log_dir: str = Field(default="logs/tensorboard")
     checkpoint_dir: str = Field(default="checkpoints")
+    auto_tune_rewards: bool = Field(default=True, description="Enable CHIMERA-driven reward auto-tuning")
+    tune_every_n_gens: int = Field(default=5, ge=1, description="Tune reward weights every N generations")
+    tune_max_delta_pct: float = Field(default=0.20, gt=0, le=0.5, description="Max reward param change per tune step")
 
 
 class ComputeConfig(BaseModel):
@@ -101,7 +104,7 @@ class DataConfig(BaseModel):
     ])
     cache_dir: str = Field(default="data/cache")
     feature_cache_format: str = Field(default="npy", description="npy | parquet")
-    lookback_days: int = Field(default=252, ge=1)
+    lookback_days: int = Field(default=504, ge=1)
 
 
 class ValidationConfig(BaseModel):
@@ -131,6 +134,9 @@ class ForwardTestConfig(BaseModel):
     poll_interval_minutes: int = Field(default=5, ge=1)
     alert_webhook_url: str = Field(default="", description="Webhook URL for alerts")
     alert_daily_loss_pct: float = Field(default=0.03, ge=0, le=1.0)
+    allocation_method: str = Field(default="sharpe_weighted", description="sharpe_weighted | equal")
+    min_allocation_pct: float = Field(default=0.05, ge=0, le=1.0)
+    route_to_broker: bool = Field(default=False, description="Also route orders through real broker")
 
 
 class HydraConfig(BaseModel):

@@ -1,411 +1,338 @@
-"""Multi-seed training curriculum.
+"""Staged Lookback Curriculum Training — 2020 to present.
 
-Runs the full Hydra pipeline across multiple seeds to build robust agents
-that generalize across different market scenarios. Each seed produces a
-different synthetic market environment, exposing agents to diverse
-price dynamics, volatility regimes, and trend patterns.
+Progressive curriculum that trains agents across expanding historical windows:
+  Stage 1: Recent 504 days  (~2 years) — learn current regime patterns
+  Stage 2: Extend to 1008 days (~4 years) — add 2022 bear + 2023 recovery
+  Stage 3: Full 1512 days (~6 years) — add COVID crash + stimulus rally
 
-The curriculum progressively increases difficulty:
-  Phase 1 (Seeds 1-3):  Warmup — few generations, learn basic dynamics
-  Phase 2 (Seeds 4-7):  Main   — more generations, deeper learning
-  Phase 3 (Seeds 8-10): Stress — high volatility seeds, test robustness
-
-Results are aggregated across all seeds to identify agents that
-consistently perform well regardless of market conditions.
+Each stage resumes from the previous stage's checkpoint. Episodes per
+generation reduced to 70 (Option A) since broader data provides more
+variety per episode.
 
 Usage:
   python scripts/train_curriculum.py
-  python scripts/train_curriculum.py --phases 1 2
-  python scripts/train_curriculum.py --seeds 42 43 44 45
-  python scripts/train_curriculum.py --generations 5 --episodes 20
+  python scripts/train_curriculum.py --stages 1 2 3
+  python scripts/train_curriculum.py --stages 3        # only final stage
+  python scripts/train_curriculum.py --gens-per-stage 50
+  python scripts/train_curriculum.py --episodes 80
+
+Backtesting and training only.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import sys
 import time
-from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-# Add TradingAgents parent so `import trading_agents` works
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Project root setup
+HYDRA_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(HYDRA_ROOT))
+sys.path.insert(0, str(HYDRA_ROOT.parent))
 
-SECTOR_ETFS = "XLK,XLF,XLE,XLV,XLI,XLU,XLP,XLY,XLB,XLRE"
+# Load all API keys from .env
+_env_path = HYDRA_ROOT.parent / "trading_agents" / ".env"
+if _env_path.exists():
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _, _v = _line.partition("=")
+            _k, _v = _k.strip(), _v.strip()
+            if _k and _v and _k not in os.environ:
+                os.environ[_k] = _v
+
+SECTOR_ETFS = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLU", "XLP", "XLY", "XLB", "XLRE"]
+
+# ── Curriculum Stages ─────────────────────────────────────────────────────
+
+STAGES = {
+    1: {
+        "name": "Recent Regime",
+        "lookback_days": 504,
+        "description": "2024-2026: Current market regime, tariffs, AI boom/correction",
+        "generations": 40,
+        "episodes": 70,
+    },
+    2: {
+        "name": "Bear + Recovery",
+        "lookback_days": 1008,
+        "description": "2022-2026: Rate hike bear market, AI rally, current instability",
+        "generations": 40,
+        "episodes": 70,
+    },
+    3: {
+        "name": "Full Spectrum",
+        "lookback_days": 1512,
+        "description": "2020-2026: COVID crash, stimulus rally, bear market, AI boom, crisis",
+        "generations": 40,
+        "episodes": 70,
+    },
+}
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(
+            HYDRA_ROOT / "logs" / "curriculum_training.log", encoding="utf-8"
+        ),
+    ],
+)
+logger = logging.getLogger("curriculum")
 
 
 def _load_alpaca_config() -> dict | None:
-    """Load Alpaca credentials from trading_agents/.env."""
-    env_path = Path(__file__).parent.parent.parent / "trading_agents" / ".env"
-    if not env_path.exists():
-        return None
-
-    config = {}
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key, value = key.strip(), value.strip()
-            if key == "ALPACA_API_KEY" and value:
-                config["api_key"] = value
-            elif key == "ALPACA_SECRET_KEY" and value:
-                config["secret_key"] = value
-            elif key == "ALPACA_BASE_URL" and value:
-                config["base_url"] = value
-
-    if "api_key" in config and "secret_key" in config:
-        return config
+    """Load Alpaca credentials from environment."""
+    api_key = os.environ.get("ALPACA_API_KEY", "")
+    secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
+    if api_key and secret_key:
+        return {
+            "api_key": api_key,
+            "secret_key": secret_key,
+            "base_url": os.environ.get("ALPACA_BASE_URL", ""),
+        }
     return None
 
 
-@dataclass
-class SeedRun:
-    """Results from a single seed training run."""
-    seed: int
-    phase: str
-    generations: int
-    episodes: int
-    duration_secs: float = 0.0
-    passed_agents: list[str] = field(default_factory=list)
-    agent_scores: dict[str, float] = field(default_factory=dict)
-    mean_reward: float = 0.0
-    best_sharpe: float = 0.0
-    error: str | None = None
+def _find_latest_checkpoint() -> str | None:
+    """Find the most recent checkpoint directory."""
+    ckpt_root = HYDRA_ROOT / "checkpoints"
+    latest_file = ckpt_root / "latest.json"
+    if latest_file.exists():
+        try:
+            with open(latest_file) as f:
+                pointer = json.load(f)
+            path = pointer.get("path", "")
+            if path and Path(path).exists():
+                return path
+        except Exception:
+            pass
+    return None
 
 
-@dataclass
-class CurriculumConfig:
-    """Configuration for the multi-seed curriculum."""
-    phases: dict[str, dict] = field(default_factory=lambda: {
-        "warmup": {
-            "seeds": [42, 43, 44],
-            "generations": 3,
-            "episodes": 15,
-            "description": "Warmup: learn basic market dynamics",
-        },
-        "main": {
-            "seeds": [100, 101, 102, 103],
-            "generations": 5,
-            "episodes": 20,
-            "description": "Main: deeper learning across diverse markets",
-        },
-        "stress": {
-            "seeds": [200, 201, 202],
-            "generations": 5,
-            "episodes": 25,
-            "description": "Stress: high-volatility regime testing",
-        },
-    })
-
-
-def run_single_seed(
-    seed: int,
-    phase_name: str,
-    generations: int,
-    episodes: int,
-    log_level: str = "INFO",
-    tensorboard_base: str = "logs/tensorboard",
+def run_stage(
+    stage_num: int,
+    stage_config: dict,
+    resume_from: str | None = None,
     alpaca_config: dict | None = None,
-    use_real_data: bool = False,
     tickers: list[str] | None = None,
-) -> SeedRun:
-    """Run a single training pipeline with the given seed."""
+    gens_override: int | None = None,
+    episodes_override: int | None = None,
+) -> dict:
+    """Run a single curriculum stage."""
     from hydra.config.schema import HydraConfig
     from hydra.pipeline.orchestrator import PipelineOrchestrator
-    from hydra.utils.logging import setup_logging
 
-    setup_logging(log_level)
+    gens = gens_override or stage_config["generations"]
+    episodes = episodes_override or stage_config["episodes"]
+    lookback = stage_config["lookback_days"]
+    tickers = tickers or SECTOR_ETFS
 
-    result = SeedRun(
-        seed=seed,
-        phase=phase_name,
-        generations=generations,
-        episodes=episodes,
+    logger.info(
+        f"=== STAGE {stage_num}: {stage_config['name']} ===\n"
+        f"  Lookback: {lookback} days\n"
+        f"  Generations: {gens}\n"
+        f"  Episodes/gen: {episodes}\n"
+        f"  Resume from: {resume_from or 'fresh start'}\n"
+        f"  {stage_config['description']}"
     )
 
+    config = HydraConfig()
+    config.data.tickers = tickers
+    config.data.lookback_days = lookback
+    config.env.num_stocks = len(tickers)
+    config.training.num_generations = gens
+    config.training.episodes_per_generation = episodes
+    config.training.auto_tune_rewards = True
+    config.seed = 42
+
+    start = time.time()
     try:
-        config = HydraConfig()
-        config.seed = seed
-        config.training.num_generations = generations
-        config.training.episodes_per_generation = episodes
-
-        if tickers:
-            config.data.tickers = tickers
-            config.env.num_stocks = len(tickers)
-
         orchestrator = PipelineOrchestrator(
             config,
             alpaca_config=alpaca_config,
-            use_real_data=use_real_data,
+            use_real_data=True,
+            resume_checkpoint=resume_from,
         )
-
-        start = time.time()
         orchestrator.run()
-        result.duration_secs = time.time() - start
+        duration = time.time() - start
 
         summary = orchestrator.get_summary()
-        result.passed_agents = summary.get("passed_agents", [])
+        latest_ckpt = _find_latest_checkpoint()
 
-        # Extract results from the pipeline run
-        pipeline_results = orchestrator._results or {}
+        result = {
+            "stage": stage_num,
+            "name": stage_config["name"],
+            "lookback_days": lookback,
+            "generations": gens,
+            "episodes": episodes,
+            "duration_secs": duration,
+            "passed_agents": summary.get("passed_agents", []),
+            "checkpoint": latest_ckpt,
+            "status": "completed",
+        }
 
-        # Get train phase metrics
-        train_data = pipeline_results.get("train_phase", {})
-        if isinstance(train_data, dict):
-            metrics_summary = train_data.get("metrics_summary", {})
-            result.mean_reward = metrics_summary.get("mean_reward", 0.0)
-            result.win_rate = metrics_summary.get("win_rate", 0.0)
-
-        # Get validation results for per-agent scores
-        val_data = pipeline_results.get("validation", {})
-        if isinstance(val_data, dict):
-            for agent_name, agent_info in val_data.get("agent_results", {}).items():
-                if isinstance(agent_info, dict):
-                    sharpe = agent_info.get("sharpe", 0.0)
-                    result.agent_scores[agent_name] = sharpe
-                    if sharpe > result.best_sharpe:
-                        result.best_sharpe = sharpe
+        logger.info(
+            f"Stage {stage_num} completed in {duration/60:.1f} min. "
+            f"Passed: {len(result['passed_agents'])} agents. "
+            f"Checkpoint: {latest_ckpt}"
+        )
+        return result
 
     except Exception as e:
-        result.error = str(e)
-
-    return result
-
-
-def print_seed_result(run: SeedRun) -> None:
-    """Print results for a single seed run."""
-    status = "PASS" if run.passed_agents else "FAIL"
-    if run.error:
-        status = "ERROR"
-
-    print(f"\n  Seed {run.seed} ({run.phase}): {status}")
-    print(f"    Duration: {run.duration_secs:.1f}s")
-    print(f"    Generations: {run.generations}, Episodes: {run.episodes}")
-
-    if run.error:
-        print(f"    Error: {run.error}")
-    else:
-        print(f"    Mean reward: {run.mean_reward:.2f}")
-        n_passed = len(run.passed_agents)
-        print(f"    Agents passed validation: {n_passed}")
-        if run.passed_agents:
-            print(f"    Passed: {', '.join(run.passed_agents)}")
-
-
-def print_curriculum_summary(runs: list[SeedRun]) -> None:
-    """Print aggregate summary across all seed runs."""
-    print("\n" + "=" * 60)
-    print("CURRICULUM SUMMARY")
-    print("=" * 60)
-
-    total_seeds = len(runs)
-    successful = [r for r in runs if r.error is None]
-    failed = [r for r in runs if r.error is not None]
-    total_time = sum(r.duration_secs for r in runs)
-
-    print(f"\nSeeds completed: {len(successful)}/{total_seeds}")
-    print(f"Total training time: {total_time:.1f}s ({total_time/60:.1f} min)")
-
-    if failed:
-        print(f"\nFailed seeds: {[r.seed for r in failed]}")
-
-    if not successful:
-        print("\nNo successful runs to analyze.")
-        return
-
-    # Aggregate pass rates
-    seeds_with_passes = [r for r in successful if r.passed_agents]
-    print(f"Seeds with passing agents: {len(seeds_with_passes)}/{len(successful)}")
-
-    # Count how often each base agent TYPE has at least one passing variant per seed
-    agent_pass_counts: dict[str, int] = {}
-    for r in successful:
-        # Deduplicate: count each base agent at most once per seed
-        bases_seen = set()
-        for agent_name in r.passed_agents:
-            base = agent_name.split("_gen")[0]
-            bases_seen.add(base)
-        for base in bases_seen:
-            agent_pass_counts[base] = agent_pass_counts.get(base, 0) + 1
-
-    if agent_pass_counts:
-        print("\nAgent consistency (seeds where at least one variant passes):")
-        for agent, count in sorted(agent_pass_counts.items(), key=lambda x: -x[1]):
-            pct = count / len(successful) * 100
-            bar = "#" * int(pct / 5)
-            print(f"  {agent:20s}  {count}/{len(successful)} seeds ({pct:.0f}%)  {bar}")
-
-    # Reward progression by phase
-    phases_seen = []
-    for r in successful:
-        if r.phase not in phases_seen:
-            phases_seen.append(r.phase)
-
-    print("\nReward by phase:")
-    for phase in phases_seen:
-        phase_runs = [r for r in successful if r.phase == phase]
-        rewards = [r.mean_reward for r in phase_runs]
-        import numpy as np
-        mean_r = np.mean(rewards)
-        std_r = np.std(rewards)
-        print(f"  {phase:10s}  mean_reward={mean_r:+.2f} +/- {std_r:.2f}  (n={len(phase_runs)})")
-
-    print("\n" + "=" * 60)
+        duration = time.time() - start
+        logger.error(f"Stage {stage_num} failed after {duration/60:.1f} min: {e}")
+        return {
+            "stage": stage_num,
+            "name": stage_config["name"],
+            "lookback_days": lookback,
+            "duration_secs": duration,
+            "status": "failed",
+            "error": str(e),
+            "checkpoint": _find_latest_checkpoint(),
+        }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Multi-seed training curriculum for Hydra agents"
+        description="Staged lookback curriculum training (2020-2026)"
     )
     parser.add_argument(
-        "--phases", nargs="+", default=None,
-        help="Which phases to run (warmup, main, stress). Default: all"
+        "--stages", nargs="+", type=int, default=None,
+        help="Which stages to run (1, 2, 3). Default: all"
     )
     parser.add_argument(
-        "--seeds", nargs="+", type=int, default=None,
-        help="Override: run these specific seeds (ignores phases)"
-    )
-    parser.add_argument(
-        "--generations", type=int, default=None,
-        help="Override generations per seed"
+        "--gens-per-stage", type=int, default=None,
+        help="Override generations per stage"
     )
     parser.add_argument(
         "--episodes", type=int, default=None,
         help="Override episodes per generation"
     )
     parser.add_argument(
-        "--log-level", type=str, default="INFO",
-        help="Log level (DEBUG, INFO, WARNING)"
-    )
-    parser.add_argument(
-        "--output", type=str, default="logs/curriculum_results.json",
-        help="Path to save results JSON"
-    )
-    parser.add_argument(
-        "--real-data", action="store_true",
-        help="Use real Alpaca market data instead of synthetic"
+        "--resume", type=str, default=None,
+        help="Resume from specific checkpoint (skips finding latest)"
     )
     parser.add_argument(
         "--tickers", type=str, default=None,
-        help=f"Comma-separated tickers (default: {SECTOR_ETFS})"
+        help=f"Comma-separated tickers (default: {','.join(SECTOR_ETFS)})"
+    )
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="Start fresh (don't resume between stages)"
     )
     args = parser.parse_args()
 
-    # Real data setup
-    alpaca_config = None
-    use_real_data = args.real_data
-    tickers_list = None
-    if use_real_data:
-        alpaca_config = _load_alpaca_config()
-        if alpaca_config is None:
-            print("ERROR: --real-data requires Alpaca credentials in trading_agents/.env")
-            sys.exit(1)
-        tickers_list = [t.strip() for t in (args.tickers or SECTOR_ETFS).split(",")]
-        print(f"Using REAL Alpaca data for {len(tickers_list)} tickers: {', '.join(tickers_list)}")
-    elif args.tickers:
-        tickers_list = [t.strip() for t in args.tickers.split(",")]
+    # Alpaca config (required for real data)
+    alpaca_config = _load_alpaca_config()
+    if not alpaca_config:
+        print("ERROR: Alpaca credentials required. Set ALPACA_API_KEY and "
+              "ALPACA_SECRET_KEY in trading_agents/.env")
+        sys.exit(1)
 
-    curriculum = CurriculumConfig()
-    all_runs: list[SeedRun] = []
+    tickers = None
+    if args.tickers:
+        tickers = [t.strip() for t in args.tickers.split(",")]
 
-    print("=" * 60)
-    print("HYDRA MULTI-SEED TRAINING CURRICULUM")
-    print("=" * 60)
+    stages_to_run = args.stages or [1, 2, 3]
+    stages_to_run = sorted(s for s in stages_to_run if s in STAGES)
 
-    if args.seeds:
-        # Custom seed list — single flat phase
-        gens = args.generations or 3
-        eps = args.episodes or 15
-        print(f"\nCustom seeds: {args.seeds}")
-        print(f"Generations: {gens}, Episodes: {eps}")
+    if not stages_to_run:
+        print("ERROR: No valid stages specified. Available: 1, 2, 3")
+        sys.exit(1)
 
-        for i, seed in enumerate(args.seeds):
-            print(f"\n--- Seed {seed} ({i+1}/{len(args.seeds)}) ---")
-            run = run_single_seed(
-                seed=seed,
-                phase_name="custom",
-                generations=gens,
-                episodes=eps,
-                log_level=args.log_level,
-                alpaca_config=alpaca_config,
-                use_real_data=use_real_data,
-                tickers=tickers_list,
-            )
-            all_runs.append(run)
-            print_seed_result(run)
+    print("=" * 64)
+    print("  HYDRA CURRICULUM TRAINING — 2020 to 2026")
+    print("=" * 64)
+    print(f"  Tickers: {', '.join(tickers or SECTOR_ETFS)}")
+    print(f"  Stages:  {stages_to_run}")
+    for s in stages_to_run:
+        cfg = STAGES[s]
+        gens = args.gens_per_stage or cfg["generations"]
+        eps = args.episodes or cfg["episodes"]
+        print(f"    Stage {s}: {cfg['name']} — {cfg['lookback_days']} days, "
+              f"{gens} gens x {eps} eps")
+    print(f"  Auto reward tuning: ON")
+    print(f"  Started: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print("=" * 64)
 
-    else:
-        # Run curriculum phases
-        phases_to_run = args.phases or list(curriculum.phases.keys())
-        total_seeds = sum(
-            len(curriculum.phases[p]["seeds"])
-            for p in phases_to_run if p in curriculum.phases
+    all_results = []
+    resume_ckpt = args.resume
+
+    for stage_num in stages_to_run:
+        stage_config = STAGES[stage_num]
+
+        # Between stages, resume from previous stage's checkpoint
+        if args.fresh:
+            resume_ckpt = None
+
+        result = run_stage(
+            stage_num=stage_num,
+            stage_config=stage_config,
+            resume_from=resume_ckpt,
+            alpaca_config=alpaca_config,
+            tickers=tickers,
+            gens_override=args.gens_per_stage,
+            episodes_override=args.episodes,
         )
-        seed_num = 0
+        all_results.append(result)
 
-        for phase_name in phases_to_run:
-            if phase_name not in curriculum.phases:
-                print(f"\nUnknown phase: {phase_name}, skipping")
-                continue
+        # Use this stage's checkpoint for the next stage
+        if result.get("checkpoint"):
+            resume_ckpt = result["checkpoint"]
 
-            phase = curriculum.phases[phase_name]
-            gens = args.generations or phase["generations"]
-            eps = args.episodes or phase["episodes"]
+        if result["status"] == "failed":
+            logger.warning(
+                f"Stage {stage_num} failed. Continuing to next stage "
+                f"with last known checkpoint: {resume_ckpt}"
+            )
 
-            print(f"\n{'='*40}")
-            print(f"PHASE: {phase_name.upper()}")
-            print(f"  {phase['description']}")
-            print(f"  Seeds: {phase['seeds']}")
-            print(f"  Generations: {gens}, Episodes: {eps}")
-            print(f"{'='*40}")
+    # ── Summary ───────────────────────────────────────────────────────────
+    print("\n" + "=" * 64)
+    print("  CURRICULUM RESULTS")
+    print("=" * 64)
 
-            for seed in phase["seeds"]:
-                seed_num += 1
-                print(f"\n--- Seed {seed} ({seed_num}/{total_seeds}) ---")
-                run = run_single_seed(
-                    seed=seed,
-                    phase_name=phase_name,
-                    generations=gens,
-                    episodes=eps,
-                    log_level=args.log_level,
-                    alpaca_config=alpaca_config,
-                    use_real_data=use_real_data,
-                    tickers=tickers_list,
-                )
-                all_runs.append(run)
-                print_seed_result(run)
+    total_time = sum(r.get("duration_secs", 0) for r in all_results)
+    print(f"  Total time: {total_time/3600:.1f} hours")
 
-    # Print aggregate summary
-    print_curriculum_summary(all_runs)
+    for r in all_results:
+        status = r["status"].upper()
+        duration = r.get("duration_secs", 0)
+        passed = len(r.get("passed_agents", []))
+        lookback = r.get("lookback_days", 0)
+        print(f"  Stage {r['stage']}: {r['name']:20s} | {lookback} days | "
+              f"{status} | {duration/60:.0f} min | {passed} agents passed")
 
-    # Save results to JSON
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    all_passed = set()
+    for r in all_results:
+        all_passed.update(r.get("passed_agents", []))
 
-    results_json = {
-        "runs": [
-            {
-                "seed": r.seed,
-                "phase": r.phase,
-                "generations": r.generations,
-                "episodes": r.episodes,
-                "duration_secs": r.duration_secs,
-                "passed_agents": r.passed_agents,
-                "agent_scores": r.agent_scores,
-                "mean_reward": r.mean_reward,
-                "best_sharpe": r.best_sharpe,
-                "error": r.error,
-            }
-            for r in all_runs
-        ],
-    }
+    if all_passed:
+        print(f"\n  Agents that passed ATHENA across curriculum: {sorted(all_passed)}")
+    else:
+        print(f"\n  No agents passed ATHENA validation (WFE threshold may need adjustment)")
 
-    output_path.write_text(json.dumps(results_json, indent=2))
-    print(f"\nResults saved to {output_path}")
+    print("=" * 64)
+
+    # Save results
+    results_path = HYDRA_ROOT / "logs" / "curriculum_results.json"
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(results_path, "w") as f:
+        json.dump({
+            "started": datetime.now().isoformat(),
+            "stages": all_results,
+            "total_duration_secs": total_time,
+        }, f, indent=2, default=str)
+    print(f"\nResults saved to {results_path}")
 
 
 if __name__ == "__main__":

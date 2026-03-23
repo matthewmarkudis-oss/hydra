@@ -171,7 +171,7 @@ class PopulationTrainer:
                         logger.info(f"  Reward params auto-tuned at gen {self._generation}")
                         # Flush off-policy replay buffers so agents don't
                         # train on experiences scored under the old reward.
-                        for agent in self.pool.agents:
+                        for agent in self.pool.get_all():
                             if isinstance(agent, TD3Agent) and agent._model is not None:
                                 agent._model.replay_buffer.reset()
                                 logger.info(f"  Flushed replay buffer for {agent.name}")

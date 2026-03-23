@@ -147,7 +147,7 @@ class TradingEnv(gym.Env):
             signal_provider=signal_provider,
         )
 
-        self.session_manager = SessionManager(bar_interval_minutes=5)
+        self.session_manager = SessionManager(bar_interval_minutes=bar_interval_minutes)
         self.risk_monitor = PortfolioRiskMonitor(num_stocks, initial_cash)
 
         # Market data (can be injected or generated synthetically)

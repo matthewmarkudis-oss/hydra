@@ -570,6 +570,68 @@ if gen_history and len(gen_history) >= 2:
         st.metric("Training Phase", current_phase.title(),
                    delta=f"Gen {gens[-1]}/{data.get('total_generations', '?')}")
 
+    # --- P&L and Deployment Monitor ---
+    latest_gen = gen_history[-1]
+    agent_deployment = latest_gen.get("agent_deployment", {})
+    best_ret = latest_gen.get("best_return_pct")
+    mean_ret = latest_gen.get("mean_return_pct")
+
+    if agent_deployment or best_ret is not None:
+        st.markdown('<div class="section-header">AGENT P&L & DEPLOYMENT</div>', unsafe_allow_html=True)
+
+        # P&L headline
+        if best_ret is not None:
+            p1, p2 = st.columns(2)
+            with p1:
+                color = COLORS["green"] if best_ret > 0 else COLORS["red"]
+                st.metric(
+                    "Best Agent Return",
+                    f"{best_ret:+.3f}%",
+                    delta="Making money" if best_ret > 0 else "Losing money",
+                    delta_color="normal" if best_ret > 0 else "inverse",
+                )
+            with p2:
+                if mean_ret is not None:
+                    color = COLORS["green"] if mean_ret > 0 else COLORS["red"]
+                    st.metric(
+                        "Pool Average Return",
+                        f"{mean_ret:+.3f}%",
+                        delta="Pool profitable" if mean_ret > 0 else "Pool losing",
+                        delta_color="normal" if mean_ret > 0 else "inverse",
+                    )
+
+        # Per-agent deployment table
+        if agent_deployment:
+            st.markdown("**Agent Deployment Status** (latest generation)")
+            for agent_name, dep_data in sorted(
+                agent_deployment.items(),
+                key=lambda x: x[1].get("deployed_pct", 0),
+                reverse=True,
+            ):
+                deployed = dep_data.get("deployed_pct", 0)
+                cash = dep_data.get("cash_pct", 100)
+                ret = dep_data.get("return_pct", 0)
+
+                # Traffic light for deployment
+                if deployed >= 50:
+                    dot = ":green_circle:"
+                    status = "Active"
+                elif deployed >= 20:
+                    dot = ":large_yellow_circle:"
+                    status = "Cautious"
+                else:
+                    dot = ":red_circle:"
+                    status = "Idle"
+
+                ret_color = COLORS["green"] if ret > 0 else COLORS["red"] if ret < 0 else COLORS["text_muted"]
+                st.markdown(
+                    f"{dot} **{friendly_name(agent_name)}** — "
+                    f"{deployed:.0f}% deployed, {cash:.0f}% cash "
+                    f"| Return: <span style='color:{ret_color}'>{ret:+.3f}%</span> "
+                    f"| *{status}*",
+                    unsafe_allow_html=True,
+                )
+
 elif gen_history and len(gen_history) == 1:
     st.info(f"Generation 1 complete (best eval: {gen_history[0]['best_eval']:.0f}). Chart appears after Gen 2.")
 else:
@@ -836,13 +898,16 @@ st.divider()
 # === ALERTS ===
 st.subheader("Recent Events")
 if data["alerts"]:
-    for alert in data["alerts"][:10]:
+    for alert in data["alerts"][:15]:
         icon_map = {
             "star": ":star:",
             "arrow_down": ":arrow_down:",
             "warning": ":warning:",
             "rocket": ":rocket:",
             "chart_decreasing": ":chart_with_downwards_trend:",
+            "pause": ":no_entry_sign:",
+            "trending_down": ":chart_with_downwards_trend:",
+            "trending_up": ":chart_with_upwards_trend:",
         }
         icon = icon_map.get(alert.get("icon", ""), ":information_source:")
         st.markdown(f"{icon} {alert['message']}")

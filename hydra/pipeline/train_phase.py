@@ -513,7 +513,7 @@ def _write_live_state(
 
     generations = []
     for gen in gen_results:
-        generations.append({
+        gen_entry = {
             "generation": gen.get("generation", 0),
             "train_mean_reward": gen.get("train_mean_reward", 0),
             "eval_scores": gen.get("eval_scores", {}),
@@ -523,7 +523,13 @@ def _write_live_state(
             "diagnosis": gen.get("diagnosis"),
             "competition": gen.get("competition"),
             "conviction": gen.get("conviction"),
-        })
+        }
+        # P&L tracking data (per-agent returns, deployment, trades)
+        if gen.get("agent_pnl"):
+            gen_entry["agent_pnl"] = gen["agent_pnl"]
+            gen_entry["best_return_pct"] = gen.get("best_return_pct", 0.0)
+            gen_entry["mean_return_pct"] = gen.get("mean_return_pct", 0.0)
+        generations.append(gen_entry)
 
     rewards = [g["train_mean_reward"] for g in generations]
     best_reward = rewards[-1] if rewards else 0

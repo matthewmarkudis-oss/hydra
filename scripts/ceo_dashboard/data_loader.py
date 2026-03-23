@@ -200,6 +200,21 @@ def _build_generation_history(generations: list[dict]) -> list[dict]:
         # CHIMERA diagnosis severity
         diag = gen.get("diagnosis") or {}
 
+        # P&L and deployment data (if available from new tracking)
+        agent_pnl = gen.get("agent_pnl", {})
+        best_return_pct = gen.get("best_return_pct", None)
+        mean_return_pct = gen.get("mean_return_pct", None)
+
+        # Per-agent deployment and trade info
+        agent_deployment = {}
+        for name, pnl_data in agent_pnl.items():
+            cash_ratio = pnl_data.get("mean_cash_ratio", 1.0)
+            agent_deployment[name] = {
+                "return_pct": round(pnl_data.get("mean_return_pct", 0.0), 3),
+                "deployed_pct": round((1.0 - cash_ratio) * 100, 1),
+                "cash_pct": round(cash_ratio * 100, 1),
+            }
+
         history.append({
             "gen": gen_num,
             "best_eval": round(best_score, 1),
@@ -212,6 +227,10 @@ def _build_generation_history(generations: list[dict]) -> list[dict]:
             "demoted": len(demoted),
             "severity": diag.get("severity", ""),
             "agent_eval_scores": {k: round(v, 1) for k, v in eval_scores.items()},
+            # New P&L tracking fields
+            "best_return_pct": round(best_return_pct, 3) if best_return_pct is not None else None,
+            "mean_return_pct": round(mean_return_pct, 3) if mean_return_pct is not None else None,
+            "agent_deployment": agent_deployment,
         })
     return history
 
@@ -252,6 +271,44 @@ def _generate_alerts(generations, validation, best_agent, benchmark) -> list[dic
                 "message": f"System detected an issue: {issue}",
                 "gen": gen_num,
             })
+
+    # Deployment alerts — flag agents sitting on their hands
+    for gen in generations:
+        gen_num = gen.get("generation", 0)
+        agent_pnl = gen.get("agent_pnl", {})
+        for agent_name, pnl_data in agent_pnl.items():
+            cash_ratio = pnl_data.get("mean_cash_ratio", 1.0)
+            if cash_ratio > 0.9:
+                alerts.append({
+                    "type": "idle_agent",
+                    "icon": "pause",
+                    "color": "red",
+                    "message": f"{friendly_name(agent_name)} is {cash_ratio:.0%} in cash — not trading",
+                    "gen": gen_num,
+                })
+            elif cash_ratio > 0.6:
+                alerts.append({
+                    "type": "low_deployment",
+                    "icon": "trending_down",
+                    "color": "amber",
+                    "message": f"{friendly_name(agent_name)} only {1.0 - cash_ratio:.0%} deployed — cautious",
+                    "gen": gen_num,
+                })
+
+        # P&L alerts
+        best_ret = gen.get("best_return_pct")
+        if best_ret is not None:
+            if best_ret > 0:
+                best_name = ""
+                if agent_pnl:
+                    best_name = max(agent_pnl, key=lambda a: agent_pnl[a].get("mean_return_pct", 0))
+                alerts.append({
+                    "type": "profit",
+                    "icon": "trending_up",
+                    "color": "green",
+                    "message": f"{friendly_name(best_name)} made money: {best_ret:+.3f}% return",
+                    "gen": gen_num,
+                })
 
     # Add benchmark comparison alert
     if best_agent and validation:

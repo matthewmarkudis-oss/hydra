@@ -136,11 +136,28 @@ class PopulationTrainer:
             self._train_agents_on_env()
 
             # 3. Evaluate all agents individually
-            eval_scores = self._evaluate_agents()
+            eval_scores, agent_pnl = self._evaluate_agents()
 
-            # Log per-agent eval scores
+            # Log per-agent eval scores and P&L
             for agent_name, score in eval_scores.items():
                 self.metrics.log_agent_eval(self._generation, agent_name, score)
+
+            # Log P&L summary for the generation
+            if agent_pnl:
+                best_agent = max(agent_pnl, key=lambda a: agent_pnl[a]["mean_return_pct"])
+                best_ret = agent_pnl[best_agent]["mean_return_pct"]
+                best_cash = agent_pnl[best_agent]["mean_cash_ratio"]
+                all_returns = [v["mean_return_pct"] for v in agent_pnl.values()]
+                mean_ret = float(np.mean(all_returns))
+                logger.info(
+                    f"  P&L: best={best_agent} ({best_ret:+.3f}%), "
+                    f"pool_mean={mean_ret:+.3f}%, "
+                    f"deployed={1.0 - best_cash:.0%}"
+                )
+                # Store for diagnostics
+                train_result["agent_pnl"] = agent_pnl
+                train_result["best_return_pct"] = best_ret
+                train_result["mean_return_pct"] = mean_ret
 
             # --- CHIMERA: Diagnostics + Circuit Breakers ---
             diagnosis = None
@@ -229,6 +246,9 @@ class PopulationTrainer:
                 "promoted": promoted,
                 "demoted": demoted,
                 "pool_size": self.pool.size,
+                "agent_pnl": train_result.get("agent_pnl", {}),
+                "best_return_pct": train_result.get("best_return_pct", 0.0),
+                "mean_return_pct": train_result.get("mean_return_pct", 0.0),
             }
 
             # Attach diagnostic/competition/conviction results
@@ -401,7 +421,7 @@ class PopulationTrainer:
             )
         return self._agent_envs[agent_name]
 
-    def _evaluate_agents(self) -> dict[str, float]:
+    def _evaluate_agents(self) -> tuple[dict[str, float], dict[str, dict]]:
         """Evaluate each agent by running episodes with only that agent active.
 
         Each eval episode is seeded so that:
@@ -414,13 +434,20 @@ class PopulationTrainer:
         deterministic and reproducible, but each agent sees different data.
         With eval_episodes=10, the mean across diverse windows provides a
         robust ranking even when policies are similar.
+
+        Returns:
+            Tuple of (eval_scores, agent_pnl_info) where agent_pnl_info maps
+            agent names to dicts with 'mean_return_pct', 'mean_cash_ratio', etc.
         """
         scores: dict[str, float] = {}
+        pnl_info: dict[str, dict] = {}
         # Base seed changes per generation so eval windows rotate
         gen_seed = 42 + self._generation * 1000
 
         for agent in self.pool.get_all():
             episode_rewards = []
+            episode_returns = []
+            episode_cash_ratios = []
             # Per-agent offset ensures different agents see different windows,
             # revealing policy differences that identical seeds would hide.
             agent_offset = hash(agent.name) % 10000
@@ -428,19 +455,34 @@ class PopulationTrainer:
             for ep in range(self.eval_episodes):
                 obs, info = self.env.reset(seed=gen_seed + ep * 100 + agent_offset)
                 total_reward = 0.0
+                step_cash_ratios = []
 
                 while True:
                     action = agent.select_action(obs, deterministic=True)
                     obs, reward, terminated, truncated, step_info = self.env.step(action)
                     total_reward += reward
+                    if "cash_ratio" in step_info:
+                        step_cash_ratios.append(step_info["cash_ratio"])
                     if terminated or truncated:
                         break
 
                 episode_rewards.append(total_reward)
 
-            scores[agent.name] = float(np.mean(episode_rewards))
+                # Capture actual P&L from episode summary
+                ep_summary = step_info.get("episode_summary", {})
+                if "total_return" in ep_summary:
+                    episode_returns.append(ep_summary["total_return"])
+                if step_cash_ratios:
+                    episode_cash_ratios.append(float(np.mean(step_cash_ratios)))
 
-        return scores
+            scores[agent.name] = float(np.mean(episode_rewards))
+            pnl_info[agent.name] = {
+                "mean_return_pct": float(np.mean(episode_returns) * 100) if episode_returns else 0.0,
+                "mean_cash_ratio": float(np.mean(episode_cash_ratios)) if episode_cash_ratios else 1.0,
+                "num_eval_episodes": len(episode_returns),
+            }
+
+        return scores, pnl_info
 
     # -------------------------------------------------------------------
     # CHIMERA: Diagnostics + Mutation integration
@@ -455,12 +497,22 @@ class PopulationTrainer:
         for use in forward-test / paper trading mode.
         """
         try:
+            # Use eval cash ratio (deterministic) if available, fall back to train
+            eval_cash_ratios = [
+                v["mean_cash_ratio"] for v in train_result.get("agent_pnl", {}).values()
+            ]
+            diag_cash_ratio = (
+                float(np.mean(eval_cash_ratios)) if eval_cash_ratios
+                else train_result.get("mean_cash_ratio", 1.0)
+            )
             gen_metrics = GenerationMetrics(
                 generation=self._generation,
                 mean_reward=train_result.get("mean_reward", 0.0),
                 best_reward=max(eval_scores.values()) if eval_scores else 0.0,
                 agent_scores=eval_scores,
                 total_trades=train_result.get("total_trades", 0),
+                mean_cash_ratio=diag_cash_ratio,
+                mean_return=train_result.get("mean_return_pct", 0.0),
             )
 
             self._diagnostics.add_generation(gen_metrics)

@@ -94,12 +94,17 @@ class Trainer:
 
         total_trades = sum(s.get("num_trades", 0) for s in episode_summaries)
 
+        # Aggregate cash ratios across episodes for diagnostics
+        ep_cash_ratios = [s["mean_cash_ratio"] for s in episode_summaries if "mean_cash_ratio" in s]
+        mean_cash_ratio = float(np.mean(ep_cash_ratios)) if ep_cash_ratios else 1.0
+
         return {
             "episodes": num_episodes,
             "mean_reward": float(np.mean(episode_rewards)),
             "std_reward": float(np.std(episode_rewards)),
             "total_steps": self._global_step,
             "total_trades": total_trades,
+            "mean_cash_ratio": mean_cash_ratio,
         }
 
     def _train_one_episode(self, deterministic: bool = False) -> tuple[float, dict]:
@@ -111,6 +116,7 @@ class Trainer:
         """
         obs, info = self.multi_env.reset()
         total_reward = 0.0
+        cash_ratios = []
 
         while True:
             # Collect individual actions
@@ -128,6 +134,10 @@ class Trainer:
             total_reward += reward
             self._global_step += 1
 
+            # Track cash ratio for diagnostics
+            if "cash_ratio" in step_info:
+                cash_ratios.append(step_info["cash_ratio"])
+
             if terminated or truncated:
                 break
 
@@ -136,6 +146,8 @@ class Trainer:
         summary = step_info.get("episode_summary", {})
         summary["num_trades"] = step_info.get("num_trades", 0)
         summary["total_transaction_costs"] = step_info.get("total_transaction_costs", 0.0)
+        if cash_ratios:
+            summary["mean_cash_ratio"] = float(np.mean(cash_ratios))
         return total_reward, summary
 
     def evaluate(

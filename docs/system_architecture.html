@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HYDRA System Architecture</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────── */
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;line-height:1.6;overflow-x:hidden}
+a{color:#58a6ff;text-decoration:none}
+::-webkit-scrollbar{width:8px}
+::-webkit-scrollbar-track{background:#161b22}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
+
+/* ── Layout ───────────────────────────────────────────────── */
+.container{max-width:1400px;margin:0 auto;padding:0 24px}
+section{padding:48px 0}
+.section-divider{border:0;height:1px;background:linear-gradient(90deg,transparent,#30363d,transparent);margin:0}
+
+/* ── Hero ─────────────────────────────────────────────────── */
+.hero{text-align:center;padding:64px 0 48px;background:linear-gradient(180deg,#161b22 0%,#0d1117 100%);border-bottom:1px solid #21262d}
+.hero h1{font-size:3.2em;font-weight:800;background:linear-gradient(135deg,#58a6ff,#bc8cff,#f778ba);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px;letter-spacing:-1px}
+.hero .subtitle{font-size:1.2em;color:#8b949e;margin-bottom:32px}
+.stats-row{display:flex;justify-content:center;gap:32px;flex-wrap:wrap}
+.stat{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:16px 24px;min-width:140px}
+.stat .num{font-size:2em;font-weight:700;color:#58a6ff}
+.stat .label{font-size:0.85em;color:#8b949e;text-transform:uppercase;letter-spacing:1px}
+
+/* ── Section Headers ──────────────────────────────────────── */
+.section-header{display:flex;align-items:center;gap:12px;margin-bottom:24px;cursor:pointer;user-select:none}
+.section-header h2{font-size:1.8em;font-weight:700;color:#f0f6fc}
+.section-header .icon{font-size:1.5em;width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:12px;flex-shrink:0}
+.section-header .toggle{margin-left:auto;color:#8b949e;font-size:1.2em;transition:transform 0.3s}
+.section-header .toggle.collapsed{transform:rotate(-90deg)}
+.section-content{overflow:hidden;transition:max-height 0.5s ease}
+
+/* ── Flow Diagram ─────────────────────────────────────────── */
+.flow-diagram{display:flex;align-items:center;justify-content:center;gap:0;flex-wrap:wrap;padding:32px 0;overflow-x:auto}
+.flow-node{background:#161b22;border:2px solid #30363d;border-radius:12px;padding:16px 20px;text-align:center;min-width:150px;position:relative;transition:all 0.3s}
+.flow-node:hover{transform:translateY(-2px);box-shadow:0 4px 20px rgba(0,0,0,0.4)}
+.flow-node .node-icon{font-size:1.8em;margin-bottom:4px}
+.flow-node .node-title{font-weight:700;font-size:0.95em;color:#f0f6fc}
+.flow-node .node-sub{font-size:0.75em;color:#8b949e;margin-top:2px}
+.flow-arrow{color:#30363d;font-size:1.8em;padding:0 8px;flex-shrink:0}
+.flow-node.blue{border-color:#1f6feb}
+.flow-node.green{border-color:#238636}
+.flow-node.purple{border-color:#8957e5}
+.flow-node.orange{border-color:#9e6a03}
+.flow-node.red{border-color:#da3633}
+.flow-node.teal{border-color:#1b7c83}
+
+/* ── Card Grid ────────────────────────────────────────────── */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.card-grid-sm{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+
+/* ── Agent Cards ──────────────────────────────────────────── */
+.agent-card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;transition:all 0.3s;position:relative;overflow:hidden}
+.agent-card:hover{border-color:#58a6ff;transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,0.3)}
+.agent-card .card-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.agent-card .card-icon{font-size:1.6em;width:40px;height:40px;display:flex;align-items:center;justify-content:center;border-radius:8px;flex-shrink:0}
+.agent-card .card-title{font-weight:700;font-size:1.05em;color:#f0f6fc}
+.agent-card .card-algo{font-size:0.8em;color:#8b949e;font-family:monospace}
+.agent-card .card-body{font-size:0.88em;color:#8b949e;margin-bottom:12px}
+.agent-card .card-params{display:flex;flex-wrap:wrap;gap:6px}
+
+.tag{display:inline-block;padding:2px 8px;border-radius:20px;font-size:0.75em;font-weight:600;border:1px solid}
+.tag-blue{color:#58a6ff;border-color:#1f6feb;background:rgba(31,111,235,0.1)}
+.tag-green{color:#3fb950;border-color:#238636;background:rgba(35,134,54,0.1)}
+.tag-purple{color:#bc8cff;border-color:#8957e5;background:rgba(137,87,229,0.1)}
+.tag-orange{color:#d29922;border-color:#9e6a03;background:rgba(158,106,3,0.1)}
+.tag-red{color:#f85149;border-color:#da3633;background:rgba(218,54,51,0.1)}
+.tag-teal{color:#39d2c0;border-color:#1b7c83;background:rgba(27,124,131,0.1)}
+.tag-pink{color:#f778ba;border-color:#bf4b8a;background:rgba(191,75,138,0.1)}
+
+/* ── Accent Bars ──────────────────────────────────────────── */
+.accent-blue{border-left:3px solid #58a6ff}
+.accent-green{border-left:3px solid #3fb950}
+.accent-purple{border-left:3px solid #bc8cff}
+.accent-orange{border-left:3px solid #d29922}
+.accent-red{border-left:3px solid #f85149}
+.accent-teal{border-left:3px solid #39d2c0}
+.accent-pink{border-left:3px solid #f778ba}
+
+/* ── Pipeline Phase ───────────────────────────────────────── */
+.pipeline-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
+.phase-card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;text-align:center;transition:all 0.3s}
+.phase-card:hover{transform:translateY(-2px);box-shadow:0 4px 20px rgba(0,0,0,0.3)}
+.phase-card .phase-num{font-size:2.5em;font-weight:800;opacity:0.15;position:absolute;top:8px;right:16px}
+.phase-card{position:relative;overflow:hidden}
+.phase-card .phase-icon{font-size:2em;margin-bottom:8px}
+.phase-card .phase-title{font-weight:700;color:#f0f6fc;margin-bottom:4px}
+.phase-card .phase-class{font-family:monospace;font-size:0.8em;color:#58a6ff}
+.phase-card .phase-desc{font-size:0.82em;color:#8b949e;margin-top:8px}
+
+/* ── Regime Cards ─────────────────────────────────────────── */
+.regime-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.regime-card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;transition:all 0.3s}
+.regime-card:hover{transform:translateY(-2px)}
+.regime-card .regime-name{font-size:1.3em;font-weight:700;margin-bottom:4px}
+.regime-card .regime-desc{font-size:0.88em;color:#8b949e;margin-bottom:16px}
+.regime-card table{width:100%;border-collapse:collapse}
+.regime-card td{padding:4px 0;font-size:0.85em}
+.regime-card td:first-child{color:#8b949e}
+.regime-card td:last-child{text-align:right;font-family:monospace;font-weight:600}
+.mult-up{color:#3fb950}
+.mult-down{color:#f85149}
+.mult-neutral{color:#8b949e}
+
+/* ── Generation Loop ──────────────────────────────────────── */
+.gen-loop{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;margin-top:24px}
+.gen-loop h3{color:#f0f6fc;margin-bottom:16px;font-size:1.2em}
+.gen-steps{display:flex;flex-direction:column;gap:8px}
+.gen-step{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#0d1117;border-radius:8px;border-left:3px solid #30363d}
+.gen-step .step-num{font-weight:700;color:#58a6ff;font-size:0.85em;min-width:24px}
+.gen-step .step-text{font-size:0.9em}
+.gen-step .step-class{font-family:monospace;color:#bc8cff;font-size:0.8em;margin-left:auto;white-space:nowrap}
+.gen-step.highlight{border-left-color:#58a6ff;background:#161b22}
+
+/* ── Distillation Flow ────────────────────────────────────── */
+.distill-flow{display:flex;flex-direction:column;gap:16px}
+.distill-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.distill-box{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:16px 20px;flex:1;min-width:200px}
+.distill-box h4{color:#f0f6fc;font-size:0.95em;margin-bottom:8px}
+.distill-box p{font-size:0.82em;color:#8b949e}
+.distill-box ul{list-style:none;padding:0}
+.distill-box li{font-size:0.82em;color:#8b949e;padding:2px 0}
+.distill-box li code{color:#bc8cff;font-size:0.9em}
+.distill-arrow-down{text-align:center;color:#30363d;font-size:1.5em}
+
+/* ── Curriculum ───────────────────────────────────────────── */
+.curriculum-track{display:flex;align-items:center;gap:0;justify-content:center;flex-wrap:wrap;padding:16px 0}
+.stage-block{background:#161b22;border:2px solid #30363d;border-radius:12px;padding:20px 28px;text-align:center;position:relative;min-width:220px}
+.stage-block:hover{transform:scale(1.02)}
+.stage-block .stage-num{font-size:2.5em;font-weight:800;opacity:0.1;position:absolute;top:4px;right:12px}
+.stage-block .stage-title{font-weight:700;color:#f0f6fc;font-size:1.1em}
+.stage-block .stage-days{font-family:monospace;font-size:1.4em;font-weight:700;margin:8px 0}
+.stage-block .stage-desc{font-size:0.82em;color:#8b949e}
+.stage-block .stage-config{font-size:0.78em;color:#8b949e;margin-top:8px;font-family:monospace}
+.stage-arrow{font-size:2em;color:#30363d;padding:0 12px}
+.stage-block.s1{border-color:#238636}.stage-block.s1 .stage-days{color:#3fb950}
+.stage-block.s2{border-color:#9e6a03}.stage-block.s2 .stage-days{color:#d29922}
+.stage-block.s3{border-color:#da3633}.stage-block.s3 .stage-days{color:#f85149}
+
+/* ── Data Layer ───────────────────────────────────────────── */
+.data-flow-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:900px){.data-flow-grid{grid-template-columns:1fr}}
+.data-pipe{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px}
+.data-pipe h4{color:#f0f6fc;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.data-pipe .pipe-steps{display:flex;flex-direction:column;gap:6px}
+.data-pipe .pipe-step{display:flex;align-items:center;gap:8px;font-size:0.85em;padding:6px 10px;background:#0d1117;border-radius:6px}
+.data-pipe .pipe-step .pipe-icon{font-size:1.2em}
+.data-pipe .pipe-step .pipe-label{color:#8b949e}
+.data-pipe .pipe-step .pipe-format{margin-left:auto;font-family:monospace;font-size:0.85em;color:#58a6ff}
+
+/* ── Forward Test ─────────────────────────────────────────── */
+.grad-path{display:flex;align-items:center;justify-content:center;gap:0;flex-wrap:wrap;padding:24px 0}
+.grad-node{background:#161b22;border:2px solid #30363d;border-radius:50%;width:130px;height:130px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;transition:all 0.3s}
+.grad-node:hover{transform:scale(1.05)}
+.grad-node .grad-icon{font-size:2em;margin-bottom:4px}
+.grad-node .grad-label{font-size:0.78em;font-weight:700;color:#f0f6fc}
+.grad-node .grad-sub{font-size:0.68em;color:#8b949e}
+.grad-arrow{font-size:1.5em;color:#30363d;padding:0 8px}
+.grad-node.active{border-color:#238636;box-shadow:0 0 20px rgba(35,134,54,0.2)}
+
+/* ── Corp Agent List ──────────────────────────────────────── */
+.corp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.corp-card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;transition:all 0.3s;border-left:3px solid #8957e5}
+.corp-card:hover{border-color:#8957e5;transform:translateY(-2px)}
+.corp-card .corp-name{font-weight:700;color:#f0f6fc;font-size:1.05em;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.corp-card .corp-role{font-size:0.82em;color:#bc8cff;margin-bottom:8px;font-style:italic}
+.corp-card .corp-desc{font-size:0.85em;color:#8b949e}
+.corp-card .corp-cost{font-size:0.75em;color:#3fb950;margin-top:8px;font-family:monospace}
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media(max-width:768px){
+  .hero h1{font-size:2em}
+  .stats-row{gap:12px}
+  .stat{min-width:100px;padding:12px}
+  .flow-diagram{flex-direction:column}
+  .flow-arrow{transform:rotate(90deg)}
+  .card-grid{grid-template-columns:1fr}
+  .pipeline-grid{grid-template-columns:1fr 1fr}
+  .curriculum-track{flex-direction:column}
+  .stage-arrow{transform:rotate(90deg)}
+  .grad-path{flex-direction:column}
+  .grad-arrow{transform:rotate(90deg)}
+}
+
+/* ── Subsection Header ────────────────────────────────────── */
+.sub-header{font-size:1.1em;font-weight:700;color:#f0f6fc;margin:24px 0 12px;padding-bottom:8px;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:8px}
+
+/* ── Table ────────────────────────────────────────────────── */
+.params-table{width:100%;border-collapse:collapse;margin-top:8px}
+.params-table th,.params-table td{padding:6px 10px;text-align:left;font-size:0.82em;border-bottom:1px solid #21262d}
+.params-table th{color:#8b949e;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;font-size:0.72em}
+.params-table td{font-family:monospace;color:#c9d1d9}
+
+/* ── Nav ──────────────────────────────────────────────────── */
+.nav{position:sticky;top:0;z-index:100;background:rgba(13,17,23,0.92);backdrop-filter:blur(12px);border-bottom:1px solid #21262d;padding:10px 0}
+.nav-inner{display:flex;align-items:center;gap:16px;overflow-x:auto;padding:0 24px;max-width:1400px;margin:0 auto}
+.nav a{color:#8b949e;font-size:0.82em;font-weight:600;white-space:nowrap;padding:6px 12px;border-radius:6px;transition:all 0.2s}
+.nav a:hover,.nav a.active{color:#f0f6fc;background:#21262d}
+.nav-brand{font-weight:800;color:#58a6ff;font-size:1em;margin-right:8px}
+
+/* ── Connection Lines ─────────────────────────────────────── */
+.connection-desc{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px 16px;font-size:0.85em;color:#8b949e;margin:16px 0;text-align:center}
+.connection-desc code{color:#bc8cff}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- NAV                                                         -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">HYDRA</span>
+    <a href="#overview">Overview</a>
+    <a href="#rl-agents">RL Agents</a>
+    <a href="#trading-agents">Trading Agents</a>
+    <a href="#pipeline">Pipeline</a>
+    <a href="#distillation">Distillation</a>
+    <a href="#regimes">Regimes</a>
+    <a href="#corp">HydraCorp</a>
+    <a href="#data">Data Layer</a>
+    <a href="#curriculum">Curriculum</a>
+    <a href="#forward-test">Forward Test</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- HERO                                                        -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<header class="hero">
+  <div class="container">
+    <h1>HYDRA</h1>
+    <p class="subtitle">Multi-Agent Reinforcement Learning Trading System &mdash; Full Architecture Map</p>
+    <div class="stats-row">
+      <div class="stat"><div class="num">6</div><div class="label">RL Algorithms</div></div>
+      <div class="stat"><div class="num">20+</div><div class="label">Trading Agents</div></div>
+      <div class="stat"><div class="num">9</div><div class="label">Corp Agents</div></div>
+      <div class="stat"><div class="num">6</div><div class="label">Pipeline Phases</div></div>
+      <div class="stat"><div class="num">4</div><div class="label">Market Regimes</div></div>
+      <div class="stat"><div class="num">3</div><div class="label">Curriculum Stages</div></div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- SYSTEM OVERVIEW                                             -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="overview">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(88,166,255,0.1)">&#x1F5FA;</div>
+      <h2>System Overview</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+      <div class="flow-diagram">
+        <div class="flow-node orange">
+          <div class="node-icon">&#x1F4CA;</div>
+          <div class="node-title">Market Data</div>
+          <div class="node-sub">Alpaca + NewsAPI + Finnhub</div>
+        </div>
+        <div class="flow-arrow">&#x2192;</div>
+        <div class="flow-node teal">
+          <div class="node-icon">&#x1F4BE;</div>
+          <div class="node-title">Data Layer</div>
+          <div class="node-sub">Parquet cache + FeatureStore</div>
+        </div>
+        <div class="flow-arrow">&#x2192;</div>
+        <div class="flow-node blue">
+          <div class="node-icon">&#x1F3CB;</div>
+          <div class="node-title">Training Pipeline</div>
+          <div class="node-sub">6-phase evolution loop</div>
+        </div>
+        <div class="flow-arrow">&#x2192;</div>
+        <div class="flow-node green">
+          <div class="node-icon">&#x1F9EA;</div>
+          <div class="node-title">ATHENA Validation</div>
+          <div class="node-sub">Walk-forward + PSR/DSR</div>
+        </div>
+        <div class="flow-arrow">&#x2192;</div>
+        <div class="flow-node purple">
+          <div class="node-icon">&#x1F3E2;</div>
+          <div class="node-title">HydraCorp</div>
+          <div class="node-sub">LLM-powered oversight</div>
+        </div>
+        <div class="flow-arrow">&#x2192;</div>
+        <div class="flow-node red">
+          <div class="node-icon">&#x1F4B0;</div>
+          <div class="node-title">Forward Test</div>
+          <div class="node-sub">Paper trading sandbox</div>
+        </div>
+      </div>
+
+      <div class="connection-desc">
+        Agents train on historical data via <code>PipelineOrchestrator</code>, are validated by ATHENA walk-forward testing,<br>
+        reviewed by HydraCorp's LLM-powered advisors, and graduated to forward testing on a paper trading account.
+      </div>
+    </div>
+  </div>
+</section>
+<hr class="section-divider">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- RL AGENTS                                                   -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="rl-agents">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(88,166,255,0.1)">&#x1F916;</div>
+      <h2>RL Agents (Hydra Core)</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+      <p style="color:#8b949e;margin-bottom:20px">
+        These agents learn continuous portfolio allocation actions [-1, +1] per stock via Stable-Baselines3.
+        All agents share one portfolio, observe the same state, and their actions are aggregated via weighted mean.
+      </p>
+
+      <div class="sub-header">&#x1F4D6; Learning Agents</div>
+      <div class="card-grid">
+
+        <!-- PPO-1 -->
+        <div class="agent-card accent-blue">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(31,111,235,0.15)">&#x1F9E0;</div>
+            <div>
+              <div class="card-title">PPO Agent (Default)</div>
+              <div class="card-algo">ppo_1 &mdash; Proximal Policy Optimization</div>
+            </div>
+          </div>
+          <div class="card-body">
+            On-policy actor-critic with clipped surrogate objective. Primary learning agent &mdash; stable gradients, good sample efficiency for continuous control.
+          </div>
+          <div class="card-params">
+            <span class="tag tag-blue">net: [256, 256]</span>
+            <span class="tag tag-blue">lr: 3e-4</span>
+            <span class="tag tag-blue">clip: 0.2</span>
+            <span class="tag tag-blue">ent: 0.01</span>
+            <span class="tag tag-blue">GAE: 0.95</span>
+            <span class="tag tag-blue">n_steps: 2048</span>
+          </div>
+        </div>
+
+        <!-- PPO-2 -->
+        <div class="agent-card accent-blue">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(31,111,235,0.15)">&#x1F52C;</div>
+            <div>
+              <div class="card-title">PPO Agent (Exploratory)</div>
+              <div class="card-algo">ppo_2 &mdash; Higher entropy, faster learning</div>
+            </div>
+          </div>
+          <div class="card-body">
+            Variant with smaller network, higher learning rate, and 2x entropy bonus. Explores more aggressively &mdash; finds unconventional strategies that the default PPO misses.
+          </div>
+          <div class="card-params">
+            <span class="tag tag-blue">net: [128, 128]</span>
+            <span class="tag tag-orange">lr: 1e-3</span>
+            <span class="tag tag-orange">ent: 0.02</span>
+            <span class="tag tag-blue">clip: 0.2</span>
+            <span class="tag tag-blue">GAE: 0.95</span>
+          </div>
+        </div>
+
+        <!-- TD3 -->
+        <div class="agent-card accent-green">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(35,134,54,0.15)">&#x1F3AF;</div>
+            <div>
+              <div class="card-title">TD3 Agent</div>
+              <div class="card-algo">td3_1 &mdash; Twin Delayed DDPG</div>
+            </div>
+          </div>
+          <div class="card-body">
+            Off-policy deterministic actor with twin critics and delayed policy updates. Better for precise continuous actions. Uses replay buffer (100K transitions).
+          </div>
+          <div class="card-params">
+            <span class="tag tag-green">net: [256, 256]</span>
+            <span class="tag tag-green">lr: 3e-4</span>
+            <span class="tag tag-green">buffer: 100K</span>
+            <span class="tag tag-green">tau: 0.005</span>
+            <span class="tag tag-green">policy_delay: 2</span>
+          </div>
+        </div>
+
+        <!-- RecurrentPPO -->
+        <div class="agent-card accent-purple">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(137,87,229,0.15)">&#x1F9EC;</div>
+            <div>
+              <div class="card-title">Recurrent PPO Agent</div>
+              <div class="card-algo">rppo_1 &mdash; PPO + LSTM Memory</div>
+            </div>
+          </div>
+          <div class="card-body">
+            PPO with LSTM layers for temporal pattern recognition. Maintains hidden state across steps &mdash; can learn sequential dependencies that MLP agents miss (e.g., multi-day trends).
+          </div>
+          <div class="card-params">
+            <span class="tag tag-purple">LSTM: 128 hidden</span>
+            <span class="tag tag-purple">net: [256]</span>
+            <span class="tag tag-purple">lr: 3e-4</span>
+            <span class="tag tag-purple">1 LSTM layer</span>
+            <span class="tag tag-purple">n_steps: 2048</span>
+          </div>
+        </div>
+
+        <!-- A2C -->
+        <div class="agent-card accent-teal">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(27,124,131,0.15)">&#x26A1;</div>
+            <div>
+              <div class="card-title">A2C Agent</div>
+              <div class="card-algo">a2c &mdash; Advantage Actor-Critic</div>
+            </div>
+          </div>
+          <div class="card-body">
+            Synchronous A2C with GAE. Simpler than PPO (no clipping), faster per step. Available in pool but typically outperformed by PPO variants.
+          </div>
+          <div class="card-params">
+            <span class="tag tag-teal">lr: 7e-4</span>
+            <span class="tag tag-teal">n_steps: 5</span>
+            <span class="tag tag-teal">vf: 0.25</span>
+            <span class="tag tag-teal">ent: 0.01</span>
+          </div>
+        </div>
+
+        <!-- SAC -->
+        <div class="agent-card accent-orange">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(158,106,3,0.15)">&#x1F525;</div>
+            <div>
+              <div class="card-title">SAC Agent</div>
+              <div class="card-algo">sac &mdash; Soft Actor-Critic</div>
+            </div>
+          </div>
+          <div class="card-body">
+            Maximum entropy off-policy with automatic entropy tuning. Excellent exploration but historically benched by CHIMERA in this system (replaced by TD3 on warm-start).
+          </div>
+          <div class="card-params">
+            <span class="tag tag-orange">net: [256, 256]</span>
+            <span class="tag tag-orange">lr: 3e-4</span>
+            <span class="tag tag-orange">buffer: 100K</span>
+            <span class="tag tag-orange">ent: auto</span>
+            <span class="tag tag-red">benched</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub-header" style="margin-top:32px">&#x2744; Special Agent Types</div>
+      <div class="card-grid">
+
+        <!-- Static Agent -->
+        <div class="agent-card accent-teal">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(27,124,131,0.15)">&#x1F4F8;</div>
+            <div>
+              <div class="card-title">Static Agent (Frozen Snapshot)</div>
+              <div class="card-algo">Immutable copy of trained agent</div>
+            </div>
+          </div>
+          <div class="card-body">
+            Created by <code>promote_top(k)</code> &mdash; freezes a learning agent's weights as a static baseline. Cannot learn. Used for performance comparison across generations. File-based + state_dict copy with CPU-safe loading.
+          </div>
+          <div class="card-params">
+            <span class="tag tag-teal">frozen=True</span>
+            <span class="tag tag-teal">CPU-safe load</span>
+            <span class="tag tag-teal">weight checksum</span>
+          </div>
+        </div>
+
+        <!-- Rule-Based -->
+        <div class="agent-card accent-orange">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(158,106,3,0.15)">&#x1F4DC;</div>
+            <div>
+              <div class="card-title">Rule-Based Agent (Wrapper)</div>
+              <div class="card-algo">Adapter for trading_agents strategies</div>
+            </div>
+          </div>
+          <div class="card-body">
+            Wraps existing BaseAgent strategies (ALPHA Momentum, BETA Mean Reversion) and translates their <code>TradeSignal</code> output into continuous [-1, +1] actions. Always frozen (no gradient learning). Provides non-ML diversity in the pool.
+          </div>
+          <div class="card-params">
+            <span class="tag tag-orange">alpha_rule</span>
+            <span class="tag tag-orange">beta_rule</span>
+            <span class="tag tag-teal">frozen=True</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Agent Pool -->
+      <div class="gen-loop" style="margin-top:24px">
+        <h3>&#x1F3D7; Agent Pool &mdash; Population Management</h3>
+        <p style="color:#8b949e;font-size:0.9em;margin-bottom:16px">
+          <code>AgentPool</code> manages the diverse population. Actions from all agents are aggregated via weighted mean into a single portfolio decision.
+        </p>
+        <div class="gen-steps">
+          <div class="gen-step"><span class="step-num">1</span><span class="step-text">Collect actions from all agents for same observation</span><span class="step-class">collect_actions()</span></div>
+          <div class="gen-step"><span class="step-num">2</span><span class="step-text">Weighted average &rarr; single action vector, clipped to [-1, 1]</span><span class="step-class">aggregate_actions()</span></div>
+          <div class="gen-step highlight"><span class="step-num">3</span><span class="step-text">Promote top-K learning agents &rarr; freeze as static snapshots</span><span class="step-class">promote_top(k=2)</span></div>
+          <div class="gen-step highlight"><span class="step-num">4</span><span class="step-text">Demote bottom-K static agents &rarr; remove from pool</span><span class="step-class">demote_bottom(k=1)</span></div>
+          <div class="gen-step"><span class="step-num">5</span><span class="step-text">Update rankings from eval scores (higher = better)</span><span class="step-class">update_rankings()</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<hr class="section-divider">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TRADING AGENTS                                              -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="trading-agents">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(63,185,80,0.1)">&#x1F4B9;</div>
+      <h2>Trading Agents (Strategy Layer)</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+
+      <!-- Core 7 -->
+      <div class="sub-header">&#x1F396; Core Strategy Agents (Greek Letters)</div>
+      <div class="card-grid">
+
+        <div class="agent-card accent-green">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(35,134,54,0.15)">&alpha;</div>
+            <div><div class="card-title">ALPHA &mdash; Momentum</div><div class="card-algo">AlphaMomentum</div></div>
+          </div>
+          <div class="card-body">MA crossover + ADX trend confirmation + RSI momentum zone. 52-week breakouts with volume. 13F hedge fund overlay. Suppresses in bear/recession.</div>
+          <div class="card-params">
+            <span class="tag tag-green">trend-follow</span>
+            <span class="tag tag-green">high-beta</span>
+            <span class="tag tag-blue">VIX-sized</span>
+            <span class="tag tag-orange">hold: 30d</span>
+          </div>
+        </div>
+
+        <div class="agent-card accent-blue">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(31,111,235,0.15)">&beta;</div>
+            <div><div class="card-title">BETA &mdash; Mean Reversion</div><div class="card-algo">BetaMeanReversion</div></div>
+          </div>
+          <div class="card-body">Bollinger z-score &lt; -0.9&sigma; + RSI oversold + 5-day drawdown &gt; 8%. Rejection candle confirmation. Boosts 40% in high-VIX fear.</div>
+          <div class="card-params">
+            <span class="tag tag-blue">contrarian</span>
+            <span class="tag tag-blue">low-beta</span>
+            <span class="tag tag-orange">hold: 15d</span>
+            <span class="tag tag-red">ATR stops</span>
+          </div>
+        </div>
+
+        <div class="agent-card accent-purple">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(137,87,229,0.15)">&gamma;</div>
+            <div><div class="card-title">GAMMA &mdash; Macro / Geopolitical</div><div class="card-algo">GammaMacro</div></div>
+          </div>
+          <div class="card-body">5-regime macro classifier (expansion/recession/stagflation/peak_hawkish/recovery). Sector rotation playbooks per regime. GDPNow, ISM PMI, Baltic Dry Index confirmation. HMM override.</div>
+          <div class="card-params">
+            <span class="tag tag-purple">macro</span>
+            <span class="tag tag-purple">sector-rotation</span>
+            <span class="tag tag-orange">hold: 90d</span>
+          </div>
+        </div>
+
+        <div class="agent-card accent-orange">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(158,106,3,0.15)">&delta;</div>
+            <div><div class="card-title">DELTA &mdash; Sentiment</div><div class="card-algo">DeltaSentiment</div></div>
+          </div>
+          <div class="card-body">Recency-weighted headline scoring (70+ keyword pairs). Earnings revision breadth. Fear/greed scoring. Volume-price divergence fallback when no news. Contrarian capitulation buys.</div>
+          <div class="card-params">
+            <span class="tag tag-orange">sentiment</span>
+            <span class="tag tag-orange">high-vol</span>
+            <span class="tag tag-orange">hold: 5d</span>
+            <span class="tag tag-blue">VIX-damped</span>
+          </div>
+        </div>
+
+        <div class="agent-card accent-teal">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(27,124,131,0.15)">&epsilon;</div>
+            <div><div class="card-title">EPSILON &mdash; Economic History</div><div class="card-algo">EpsilonEconomicHistory</div></div>
+          </div>
+          <div class="card-body">6 historical analogues: 1970s stagflation, 1987 rate shock, 2000 dot-com, 2008 GFC, 2020 COVID, 2022 rate shock. Pattern-matches current conditions to historical playbooks.</div>
+          <div class="card-params">
+            <span class="tag tag-teal">analogue</span>
+            <span class="tag tag-teal">macro</span>
+            <span class="tag tag-teal">6 playbooks</span>
+          </div>
+        </div>
+
+        <div class="agent-card accent-pink">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(191,75,138,0.15)">&zeta;</div>
+            <div><div class="card-title">ZETA &mdash; Fundamentals / Quality</div><div class="card-algo">ZetaFundamentals</div></div>
+          </div>
+          <div class="card-body">7-metric quality score: P/E, FCF yield, ROE, ROIC, gross margin, D/E, revenue growth. <strong>VETO POWER</strong> when score &lt; 0.30 (unprofitable, high debt, negative FCF).</div>
+          <div class="card-params">
+            <span class="tag tag-pink">quality</span>
+            <span class="tag tag-pink">low-vol</span>
+            <span class="tag tag-red">VETO</span>
+            <span class="tag tag-orange">hold: 180d</span>
+          </div>
+        </div>
+
+        <div class="agent-card accent-red">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(218,54,51,0.15)">&theta;</div>
+            <div><div class="card-title">THETA &mdash; Tail Risk (Taleb)</div><div class="card-algo">ThetaAgent</div></div>
+          </div>
+          <div class="card-body">Fragility score (0-100) from VIX, term structure, skew, credit spreads. Does NOT maximize Sharpe &mdash; bleeds theta in calm markets as insurance. Barbell: TLT anchor + TAIL/UVXY hedges. Broadcasts REDUCE to other agents at high fragility.</div>
+          <div class="card-params">
+            <span class="tag tag-red">antifragile</span>
+            <span class="tag tag-red">tail-risk</span>
+            <span class="tag tag-red">convex payoff</span>
+            <span class="tag tag-orange">hedge: TAIL/UVXY</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Meta/Synthesis -->
+      <div class="sub-header" style="margin-top:32px">&#x1F9E9; Meta / Synthesis Agents</div>
+      <div class="card-grid">
+
+        <div class="agent-card accent-purple">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(137,87,229,0.15)">&Sigma;</div>
+            <div><div class="card-title">SIGMA &mdash; Rule Voting</div><div class="card-algo">SigmaSynthesis</div></div>
+          </div>
+          <div class="card-body">Conviction-weighted majority vote across all agent signals. Dissent ratio penalty (up to 50% conviction reduction). Regime score gating: reduces buys by 60% when regime_score &le; -2. Requires &ge;2 contributing signals per ticker.</div>
+          <div class="card-params">
+            <span class="tag tag-purple">ensemble</span>
+            <span class="tag tag-purple">dissent tracking</span>
+          </div>
+        </div>
+
+        <div class="agent-card accent-purple">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(137,87,229,0.15)">&#x1F4CA;</div>
+            <div><div class="card-title">SIGMA_ML &mdash; ML Stacking</div><div class="card-algo">SigmaML (LogisticRegression)</div></div>
+          </div>
+          <div class="card-body">Meta-learner trained on agent conviction vectors &rarr; P(trade won). Features: per-agent conviction, agreement, VIX, regime, HMM, fragility, breadth. Retrained every 30d (needs &ge;50 samples). Fallback to conviction-weighted average.</div>
+          <div class="card-params">
+            <span class="tag tag-purple">meta-learner</span>
+            <span class="tag tag-blue">sklearn</span>
+          </div>
+        </div>
+
+        <div class="agent-card accent-purple">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(137,87,229,0.15)">&eta;</div>
+            <div><div class="card-title">ETA &mdash; Weight Auditor</div><div class="card-algo">EtaEnsemble</div></div>
+          </div>
+          <div class="card-body">Reads all agent memory files to compute rolling win rates / IC. Scores: (regime_wr &times; 0.35) + (rolling_wr &times; 0.25) + (overall_wr &times; 0.25) + (ic &times; 0.15). WFE gating: agents with IC &lt; -0.05 floored to 5%. Bounds: [5%, 35%].</div>
+          <div class="card-params">
+            <span class="tag tag-purple">meta</span>
+            <span class="tag tag-purple">IC-weighted</span>
+            <span class="tag tag-purple">WFE gating</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHIMERA-Generated -->
+      <div class="sub-header" style="margin-top:32px">&#x1F9EC; CHIMERA-Generated Agents</div>
+      <div class="card-grid card-grid-sm">
+
+        <div class="agent-card accent-orange">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(158,106,3,0.15)">&#x1F4C8;</div>
+            <div><div class="card-title">BREAKOUT</div><div class="card-algo">DonchianBreakout</div></div>
+          </div>
+          <div class="card-body">20-day Donchian channel breakout. ADX trend confirmation. ATR trailing stops. Only trades in TRENDING regimes.</div>
+          <div class="card-params"><span class="tag tag-green">momentum</span><span class="tag tag-orange">high-beta</span></div>
+        </div>
+
+        <div class="agent-card accent-orange">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(158,106,3,0.15)">&#x1F503;</div>
+            <div><div class="card-title">FADE</div><div class="card-algo">AntiTrendFade</div></div>
+          </div>
+          <div class="card-body">Panic dip buys (1d drop &gt;3%, RSI&lt;30). Euphoric rip sells (1d rise &gt;4%, RSI&gt;75). Boosts in HIGH_VOL regime.</div>
+          <div class="card-params"><span class="tag tag-blue">contrarian</span><span class="tag tag-red">high-vol</span></div>
+        </div>
+
+        <div class="agent-card accent-orange">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(158,106,3,0.15)">&#x1F91D;</div>
+            <div><div class="card-title">PAIRS</div><div class="card-algo">PairsMeanReversion</div></div>
+          </div>
+          <div class="card-body">Cointegrated pairs (r &gt; 0.70). OLS hedge ratio. Buy cheap leg when spread z &lt; -2.0. Market-neutral.</div>
+          <div class="card-params"><span class="tag tag-blue">mean-revert</span><span class="tag tag-teal">low-beta</span></div>
+        </div>
+
+        <div class="agent-card accent-orange">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(158,106,3,0.15)">&#x1F4CF;</div>
+            <div><div class="card-title">STATARB</div><div class="card-algo">StatArbZScore</div></div>
+          </div>
+          <div class="card-body">Rolling z-score (40d). Hurst exponent proxy via autocorrelation. Only trades mean-reverting series (autocorr &lt; 0.1).</div>
+          <div class="card-params"><span class="tag tag-blue">stat-arb</span><span class="tag tag-teal">low-beta</span></div>
+        </div>
+
+        <div class="agent-card accent-orange">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(158,106,3,0.15)">&#x1F30A;</div>
+            <div><div class="card-title">VOLHARV</div><div class="card-algo">VolatilityHarvest</div></div>
+          </div>
+          <div class="card-body">Vol ratio (20d/60d) &gt; 1.5 + VIX &gt; 22 &rarr; mean-reversion buy. Vol crush &lt; 0.6 + VIX &lt; 14 &rarr; sell signal.</div>
+          <div class="card-params"><span class="tag tag-red">volatility</span><span class="tag tag-orange">VIX-driven</span></div>
+        </div>
+      </div>
+
+      <!-- ML-Enhanced -->
+      <div class="sub-header" style="margin-top:32px">&#x1F9E0; ML-Enhanced Agents (GradientBoosting)</div>
+      <div class="card-grid card-grid-sm">
+        <div class="agent-card accent-blue">
+          <div class="card-header"><div class="card-icon" style="background:rgba(31,111,235,0.15)">&#x1F4BB;</div><div><div class="card-title">ALPHA_ML</div><div class="card-algo">Cross-sectional momentum ranking</div></div></div>
+          <div class="card-body">GBM trained on 252d lookback. Target: fwd 21d return &gt; median. Top-K buy, bottom-K sell.</div>
+          <div class="card-params"><span class="tag tag-blue">GBM</span><span class="tag tag-blue">cross-section</span><span class="tag tag-blue">retrain: 21d</span></div>
+        </div>
+        <div class="agent-card accent-blue">
+          <div class="card-header"><div class="card-icon" style="background:rgba(31,111,235,0.15)">&#x1F4BB;</div><div><div class="card-title">BETA_ML</div><div class="card-algo">ML mean-reversion enhancement</div></div></div>
+          <div class="card-body">GBM classifier enhancing BETA's contrarian signals with learned features.</div>
+          <div class="card-params"><span class="tag tag-blue">GBM</span><span class="tag tag-blue">mean-revert</span></div>
+        </div>
+        <div class="agent-card accent-blue">
+          <div class="card-header"><div class="card-icon" style="background:rgba(31,111,235,0.15)">&#x1F4BB;</div><div><div class="card-title">GAMMA_ML</div><div class="card-algo">ML macro regime classification</div></div></div>
+          <div class="card-body">GBM trained on macro features for regime prediction enhancement.</div>
+          <div class="card-params"><span class="tag tag-blue">GBM</span><span class="tag tag-purple">macro</span></div>
+        </div>
+        <div class="agent-card accent-blue">
+          <div class="card-header"><div class="card-icon" style="background:rgba(31,111,235,0.15)">&#x1F4BB;</div><div><div class="card-title">DELTA_ML</div><div class="card-algo">ML sentiment scoring</div></div></div>
+          <div class="card-body">GBM trained on sentiment + price features for enhanced signal timing.</div>
+          <div class="card-params"><span class="tag tag-blue">GBM</span><span class="tag tag-orange">sentiment</span></div>
+        </div>
+        <div class="agent-card accent-blue">
+          <div class="card-header"><div class="card-icon" style="background:rgba(31,111,235,0.15)">&#x1F4BB;</div><div><div class="card-title">EPSILON_ML</div><div class="card-algo">ML historical analogue matching</div></div></div>
+          <div class="card-body">GBM trained on macro indicators for pattern-matching to historical episodes.</div>
+          <div class="card-params"><span class="tag tag-blue">GBM</span><span class="tag tag-teal">analogue</span></div>
+        </div>
+      </div>
+
+      <!-- Utilities -->
+      <div class="sub-header" style="margin-top:32px">&#x1F527; Regime Detection Utilities</div>
+      <div class="card-grid">
+        <div class="agent-card accent-teal">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(27,124,131,0.15)">&#x1F4CA;</div>
+            <div><div class="card-title">SigmaHMM &mdash; Hidden Markov Model</div><div class="card-algo">3-state GaussianHMM on SPY returns</div></div>
+          </div>
+          <div class="card-body">NOT a trading agent. Enriches MarketContext with <code>hmm_regime</code> (bull/bear/sideways), confidence, and state probabilities. Features: daily return, 10d vol, volume z-score. Retrained weekly.</div>
+          <div class="card-params"><span class="tag tag-teal">HMM</span><span class="tag tag-teal">3 states</span><span class="tag tag-teal">SPY-based</span></div>
+        </div>
+        <div class="agent-card accent-teal">
+          <div class="card-header">
+            <div class="card-icon" style="background:rgba(27,124,131,0.15)">&#x1F3F7;</div>
+            <div><div class="card-title">RegimeClassifier &mdash; Technical</div><div class="card-algo">Rule-based regime from SPY price action</div></div>
+          </div>
+          <div class="card-body">Classifies: TRENDING_BULL, TRENDING_BEAR, HIGH_VOL, MEAN_REVERTING, CHOPPY. Uses drift, trend strength, annualized vol, and autocorrelation. 1-hour cache TTL.</div>
+          <div class="card-params"><span class="tag tag-teal">5 regimes</span><span class="tag tag-teal">rule-based</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+<hr class="section-divider">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TRAINING PIPELINE                                           -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="pipeline">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(88,166,255,0.1)">&#x1F3D7;</div>
+      <h2>Training Pipeline (6-Phase DAG)</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+
+      <div class="pipeline-grid">
+        <div class="phase-card" style="border-color:#d29922">
+          <div class="phase-num">1</div>
+          <div class="phase-icon">&#x1F4E5;</div>
+          <div class="phase-title">Data Preparation</div>
+          <div class="phase-class">prepare_data()</div>
+          <div class="phase-desc">Fetch OHLCV from Alpaca (Parquet cache). Compute indicators (RSI, MACD, BB, ATR). Build SharedMarketData numpy arrays.</div>
+        </div>
+        <div class="phase-card" style="border-color:#1b7c83">
+          <div class="phase-num">2</div>
+          <div class="phase-icon">&#x1F3D7;</div>
+          <div class="phase-title">Env Construction</div>
+          <div class="phase-class">build_environments()</div>
+          <div class="phase-desc">Split data: train (60%), val (20%), test (20%). Build TradingEnv with reward fn, constraints, and session labels.</div>
+        </div>
+        <div class="phase-card" style="border-color:#1f6feb">
+          <div class="phase-num">3</div>
+          <div class="phase-icon">&#x1F3CB;</div>
+          <div class="phase-title">RL Training</div>
+          <div class="phase-class">run_training()</div>
+          <div class="phase-desc">N generations of: episodes &rarr; SB3 learn &rarr; diagnostics &rarr; reward tuning &rarr; promotion/demotion. Checkpoint each gen.</div>
+        </div>
+        <div class="phase-card" style="border-color:#238636">
+          <div class="phase-num">4</div>
+          <div class="phase-icon">&#x1F4CB;</div>
+          <div class="phase-title">Evaluation</div>
+          <div class="phase-class">run_evaluation()</div>
+          <div class="phase-desc">RL deterministic eval on val_env. VectorBT cross-validation (5bps fees, 10bps slippage). Sharpe, return, max DD.</div>
+        </div>
+        <div class="phase-card" style="border-color:#8957e5">
+          <div class="phase-num">5</div>
+          <div class="phase-icon">&#x1F3C6;</div>
+          <div class="phase-title">Pool Update</div>
+          <div class="phase-class">update_pool()</div>
+          <div class="phase-desc">Rank agents by eval score. Promote top-K learning &rarr; static snapshots. Demote bottom-K static agents. Update weights.</div>
+        </div>
+        <div class="phase-card" style="border-color:#da3633">
+          <div class="phase-num">6</div>
+          <div class="phase-icon">&#x1F6E1;</div>
+          <div class="phase-title">ATHENA Validation</div>
+          <div class="phase-class">run_validation()</div>
+          <div class="phase-desc">Walk-forward (4 windows). WFE overfitting detection. PSR/DSR statistical tests. CHIMERA fitness decomposition. Pass/fail gate.</div>
+        </div>
+      </div>
+
+      <!-- Generation Loop Detail -->
+      <div class="gen-loop">
+        <h3>&#x1F504; Generation Loop (Inside Phase 3)</h3>
+        <p style="color:#8b949e;font-size:0.88em;margin-bottom:16px">
+          Each generation runs the following steps for all agents in the pool. Managed by <code>PopulationTrainer</code>.
+        </p>
+        <div class="gen-steps">
+          <div class="gen-step"><span class="step-num">1</span><span class="step-text">Run multi-agent episodes (shared obs, aggregated actions, shared reward)</span><span class="step-class">Trainer.train_episodes()</span></div>
+          <div class="gen-step"><span class="step-num">2</span><span class="step-text">SB3 gradient updates per learning agent (.learn())</span><span class="step-class">_train_agents_on_env()</span></div>
+          <div class="gen-step"><span class="step-num">3</span><span class="step-text">Deterministic evaluation episodes on val_env</span><span class="step-class">_evaluate_agents()</span></div>
+          <div class="gen-step highlight" style="border-left-color:#f85149"><span class="step-num">4</span><span class="step-text">CHIMERA diagnostics: detect overfitting, drawdown, stagnation &rarr; mutation recommendations</span><span class="step-class">DiagnosticEngine.diagnose()</span></div>
+          <div class="gen-step highlight" style="border-left-color:#d29922"><span class="step-num">5</span><span class="step-text">Auto reward tuning: map mutations &rarr; bounded &plusmn;20% reward param adjustments (every 5 gens)</span><span class="step-class">AutoRewardTuner.apply_mutations()</span></div>
+          <div class="gen-step"><span class="step-num">6</span><span class="step-text">ELEOS conviction calibration: Bayesian trust gating for new/unproven agents</span><span class="step-class">ConvictionCalibrator.update()</span></div>
+          <div class="gen-step"><span class="step-num">7</span><span class="step-text">PROMETHEUS competition: composite score &rarr; EMA-smoothed weight rebalancing</span><span class="step-class">CompetitionRebalancer.rebalance()</span></div>
+          <div class="gen-step highlight" style="border-left-color:#238636"><span class="step-num">8</span><span class="step-text">Promote top-K learning agents &rarr; frozen static snapshots</span><span class="step-class">pool.promote_top()</span></div>
+          <div class="gen-step highlight" style="border-left-color:#da3633"><span class="step-num">9</span><span class="step-text">Demote bottom-K static agents &rarr; remove from pool</span><span class="step-class">pool.demote_bottom()</span></div>
+          <div class="gen-step"><span class="step-num">10</span><span class="step-text">Curriculum phase transition (warmup &rarr; exploration &rarr; exploitation)</span><span class="step-class">Curriculum.on_generation()</span></div>
+          <div class="gen-step"><span class="step-num">11</span><span class="step-text">Save checkpoint (pool + metadata + latest.json pointer)</span><span class="step-class">pool.save()</span></div>
+        </div>
+      </div>
+
+      <!-- Observation/Action Space -->
+      <div class="gen-loop" style="margin-top:16px">
+        <h3>&#x1F441; Observation & Action Space</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:12px">
+          <div>
+            <h4 style="color:#58a6ff;font-size:0.95em;margin-bottom:8px">Observation (17N + 5)</h4>
+            <table class="params-table">
+              <tr><th>Feature</th><th>Per Stock</th></tr>
+              <tr><td>OHLCV (normalized)</td><td>5</td></tr>
+              <tr><td>RSI, MACD, Bollinger</td><td>4</td></tr>
+              <tr><td>ATR, Volume ratio</td><td>2</td></tr>
+              <tr><td>Returns (1d, 5d, 20d)</td><td>3</td></tr>
+              <tr><td>Position, unrealized PnL</td><td>2</td></tr>
+              <tr><td>Session label</td><td>1</td></tr>
+              <tr><td colspan="2" style="color:#8b949e;border:none">+ 5 global: cash%, portfolio_value, time_frac, day_of_week, drawdown</td></tr>
+            </table>
+          </div>
+          <div>
+            <h4 style="color:#3fb950;font-size:0.95em;margin-bottom:8px">Action Space</h4>
+            <table class="params-table">
+              <tr><th>Dimension</th><th>Range</th></tr>
+              <tr><td>Per stock target allocation</td><td>[-1.0, +1.0]</td></tr>
+              <tr><td colspan="2" style="color:#8b949e;border:none">-1 = max short, 0 = flat, +1 = max long</td></tr>
+              <tr><td colspan="2" style="color:#8b949e;border:none">Weighted mean across all agents</td></tr>
+              <tr><td colspan="2" style="color:#8b949e;border:none">Constrained: max 15% per position, 20% max DD</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+<hr class="section-divider">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- DISTILLATION SYSTEM                                         -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="distillation">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(218,54,51,0.1)">&#x1F52C;</div>
+      <h2>Distillation & Reward Tuning</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+
+      <div class="distill-flow">
+        <!-- Row 1: Diagnostics -->
+        <div class="distill-row">
+          <div class="distill-box" style="border-color:#da3633">
+            <h4 style="color:#f85149">&#x1F6A8; CHIMERA Diagnostics</h4>
+            <p>Runs 7 checks every generation. Detects overfitting, excessive drawdown, insufficient trades, stagnation, negative Sharpe, low win rate.</p>
+            <ul style="margin-top:8px">
+              <li>&#x2192; <code>increase_drawdown_penalty</code></li>
+              <li>&#x2192; <code>decrease_drawdown_penalty</code></li>
+              <li>&#x2192; <code>tighten_risk</code> / <code>loosen_risk</code></li>
+              <li>&#x2192; <code>prioritize_consistency</code></li>
+              <li>&#x2192; <code>restore_defaults</code></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="distill-arrow-down">&#x25BC;</div>
+
+        <!-- Row 2: Auto Tuner -->
+        <div class="distill-row">
+          <div class="distill-box" style="border-color:#d29922">
+            <h4 style="color:#d29922">&#x1F527; Auto Reward Tuner</h4>
+            <p>Consumes mutations every 5 generations. Net vote per parameter. Bounded &plusmn;20% adjustments. Clamps to schema limits.</p>
+            <table class="params-table" style="margin-top:8px">
+              <tr><th>Parameter</th><th>Bounds</th></tr>
+              <tr><td>drawdown_penalty</td><td>[0.0, 2.0]</td></tr>
+              <tr><td>transaction_penalty</td><td>[0.0, 1.0]</td></tr>
+              <tr><td>holding_penalty</td><td>[0.0, 1.0]</td></tr>
+              <tr><td>pnl_bonus_weight</td><td>[0.5, 20.0]</td></tr>
+              <tr><td>reward_scale</td><td>[10.0, 500.0]</td></tr>
+            </table>
+          </div>
+        </div>
+
+        <div class="distill-arrow-down">&#x25BC;</div>
+
+        <!-- Row 3: Reward Function + Regime -->
+        <div class="distill-row">
+          <div class="distill-box" style="border-color:#1f6feb;flex:2">
+            <h4 style="color:#58a6ff">&#x1F4B0; Differential Sharpe Reward</h4>
+            <p>Moody & Saffell (2001) incremental Sharpe via EMA. Applied every environment step.</p>
+            <p style="margin-top:8px"><code>total = sharpe_reward + pnl_bonus + dd_penalty + tc_penalty + hold_penalty</code></p>
+            <p style="margin-top:4px">Effective weights = <code>base_params &times; regime_multipliers</code></p>
+          </div>
+          <div class="distill-box" style="border-color:#8957e5;flex:1">
+            <h4 style="color:#bc8cff">&#x1F30D; Regime Multipliers</h4>
+            <p>Applied multiplicatively on every reward computation. Set by GeopoliticsExpert classification.</p>
+            <p style="margin-top:8px;color:#58a6ff;font-family:monospace;font-size:0.85em">get_multipliers(regime)</p>
+          </div>
+        </div>
+
+        <div class="distill-arrow-down">&#x25BC;</div>
+
+        <!-- Row 4: Agent Behavior -->
+        <div class="distill-row">
+          <div class="distill-box" style="border-color:#238636">
+            <h4 style="color:#3fb950">&#x1F916; Agent Learning</h4>
+            <p>Updated reward signals flow through SB3 .learn() calls. Agents adapt their policy networks to the modified reward landscape. This is how diagnostics ultimately shape agent behavior &mdash; through the reward function, not direct weight manipulation.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Inverse RL -->
+      <div class="gen-loop" style="margin-top:24px">
+        <h3>&#x1F4DA; Inverse RL (13F Distillation)</h3>
+        <p style="color:#8b949e;font-size:0.88em">
+          MaxEnt IRL infers reward weights from SEC 13F hedge fund filings. Extracts 12 features (Fama-French betas, sector deltas, HHI concentration, turnover, drawdown proxy) and maps them to RewardConfig parameters via regularized feature matching.
+        </p>
+      </div>
+
+      <!-- ATHENA -->
+      <div class="gen-loop" style="margin-top:16px">
+        <h3>&#x1F6E1; ATHENA Statistical Validation</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-top:12px">
+          <div style="background:#0d1117;padding:12px;border-radius:8px">
+            <div style="font-weight:700;color:#58a6ff;margin-bottom:4px">Walk-Forward (WFE)</div>
+            <div style="font-size:0.82em;color:#8b949e">OOS Sharpe / IS Sharpe across 4 windows. Detects overfitting. Threshold: &ge; 0.40</div>
+          </div>
+          <div style="background:#0d1117;padding:12px;border-radius:8px">
+            <div style="font-weight:700;color:#3fb950;margin-bottom:4px">PSR (Probabilistic Sharpe)</div>
+            <div style="font-size:0.82em;color:#8b949e">P(true SR &gt; benchmark). Adjusts for skewness + kurtosis. Bailey & Lopez de Prado (2012).</div>
+          </div>
+          <div style="background:#0d1117;padding:12px;border-radius:8px">
+            <div style="font-weight:700;color:#bc8cff;margin-bottom:4px">DSR (Deflated Sharpe)</div>
+            <div style="font-size:0.82em;color:#8b949e">Adjusts for multiple testing bias (many agents tested). Bailey & Lopez de Prado (2014).</div>
+          </div>
+          <div style="background:#0d1117;padding:12px;border-radius:8px">
+            <div style="font-weight:700;color:#d29922;margin-bottom:4px">CHIMERA Fitness</div>
+            <div style="font-size:0.82em;color:#8b949e">Sharpe(35%) + MaxDD(20%) + PF(20%) + WFE(15%) + Consistency(10%) &times; stability</div>
+          </div>
+        </div>
+        <div style="margin-top:12px;font-size:0.85em;color:#8b949e">
+          <strong style="color:#f0f6fc">Pass thresholds:</strong> Sharpe &ge; 0.3 &bull; Max DD &le; 25% &bull; Win rate &ge; 40% &bull; Profit factor &ge; 1.1 &bull; WFE &ge; 0.40
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+<hr class="section-divider">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- REGIME SYSTEM                                               -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="regimes">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(210,153,34,0.1)">&#x1F30D;</div>
+      <h2>Market Regime System</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+      <p style="color:#8b949e;margin-bottom:20px">
+        The GeopoliticsExpert classifies the macro regime from live news headlines (NewsAPI + Finnhub &rarr; Groq LLM analysis).
+        Each regime applies multiplicative overlays to the base reward parameters, fundamentally changing how agents are trained.
+      </p>
+
+      <div class="regime-grid">
+
+        <div class="regime-card" style="border-color:#238636">
+          <div class="regime-name" style="color:#3fb950">&#x1F7E2; RISK ON</div>
+          <div class="regime-desc">Markets bullish, low VIX, positive economic data. Normal training parameters &mdash; Sharpe-driven with mild P&L bonus.</div>
+          <table>
+            <tr><td>Drawdown penalty</td><td class="mult-down">&times;0.8</td></tr>
+            <tr><td>Transaction penalty</td><td class="mult-neutral">&times;1.0</td></tr>
+            <tr><td>Holding penalty</td><td class="mult-neutral">&times;1.0</td></tr>
+            <tr><td>P&L bonus</td><td class="mult-up">&times;1.2</td></tr>
+            <tr><td>Reward scale</td><td class="mult-neutral">&times;1.0</td></tr>
+          </table>
+        </div>
+
+        <div class="regime-card" style="border-color:#d29922">
+          <div class="regime-name" style="color:#d29922">&#x1F7E1; RISK OFF</div>
+          <div class="regime-desc">Uncertainty rising, moderate VIX, mixed data. Tighten drawdown limits, increase holding penalty, reduce P&L bonus.</div>
+          <table>
+            <tr><td>Drawdown penalty</td><td class="mult-up">&times;1.5</td></tr>
+            <tr><td>Transaction penalty</td><td class="mult-down">&times;0.8</td></tr>
+            <tr><td>Holding penalty</td><td class="mult-up">&times;1.2</td></tr>
+            <tr><td>P&L bonus</td><td class="mult-down">&times;0.7</td></tr>
+            <tr><td>Reward scale</td><td class="mult-down">&times;0.9</td></tr>
+          </table>
+        </div>
+
+        <div class="regime-card" style="border-color:#da3633">
+          <div class="regime-name" style="color:#f85149">&#x1F534; CRISIS</div>
+          <div class="regime-desc">Black swan events, high VIX, market panic. Maximum conservatism &mdash; extreme drawdown protection, minimal position sizes, capital preservation mode.</div>
+          <table>
+            <tr><td>Drawdown penalty</td><td class="mult-up">&times;2.5</td></tr>
+            <tr><td>Transaction penalty</td><td class="mult-down">&times;0.5</td></tr>
+            <tr><td>Holding penalty</td><td class="mult-up">&times;1.5</td></tr>
+            <tr><td>P&L bonus</td><td class="mult-down">&times;0.3</td></tr>
+            <tr><td>Reward scale</td><td class="mult-down">&times;0.7</td></tr>
+          </table>
+        </div>
+
+        <div class="regime-card" style="border-color:#8957e5">
+          <div class="regime-name" style="color:#bc8cff">&#x1F7E3; ANTIFRAGILE</div>
+          <div class="regime-desc">Taleb barbell strategy. Chaos with clear directional signals (wars, oil shocks, tariffs). Protect the core aggressively, swing hard on asymmetric bets. Let winners run.</div>
+          <table>
+            <tr><td>Drawdown penalty</td><td class="mult-up">&times;2.0</td></tr>
+            <tr><td>Transaction penalty</td><td class="mult-up">&times;1.3</td></tr>
+            <tr><td>Holding penalty</td><td class="mult-down">&times;0.6</td></tr>
+            <tr><td>P&L bonus</td><td class="mult-up">&times;1.8</td></tr>
+            <tr><td>Reward scale</td><td class="mult-up">&times;1.1</td></tr>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+<hr class="section-divider">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- HYDRACORP                                                   -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="corp">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(137,87,229,0.1)">&#x1F3E2;</div>
+      <h2>HydraCorp (LLM-Powered Oversight)</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+      <p style="color:#8b949e;margin-bottom:20px">
+        An AI-managed corporation layer that wraps the RL training pipeline. Corp agents analyze results, classify regimes, review proposals, and manage risk. Powered by Groq (Llama 3.3 70B, free tier) with rule-based fallbacks.
+      </p>
+
+      <div class="corp-grid">
+
+        <div class="corp-card">
+          <div class="corp-name">&#x1F451; Chief of Staff</div>
+          <div class="corp-role">Central Pipeline Orchestrator</div>
+          <div class="corp-desc">Coordinates all corp agents. Pre-flight config validation. Routes pipeline results to strategy division. Manages shadow trading promotion. Produces CEO briefing.</div>
+          <div class="corp-cost">Cost: $0 (orchestration only)</div>
+        </div>
+
+        <div class="corp-card">
+          <div class="corp-name">&#x1F30D; Geopolitics Expert</div>
+          <div class="corp-role">News-Driven Regime Classification</div>
+          <div class="corp-desc">Fetches headlines from NewsAPI + Finnhub (138+ headlines). Groq LLM classifies regime (risk_on/risk_off/crisis/antifragile). Sector bias scoring. Ticker change recommendations. Runs daily.</div>
+          <div class="corp-cost">Cost: ~1 Groq call/day (free tier)</div>
+        </div>
+
+        <div class="corp-card">
+          <div class="corp-name">&#x1F4BC; Hedge Fund Director</div>
+          <div class="corp-role">LLM Strategy Advisor</div>
+          <div class="corp-desc">Analyzes pipeline results: fitness scores, Sharpe ratios, drawdowns. Generates strategy memos with config change proposals. Ticker intelligence evaluation. Auto-submits proposals with confidence scores.</div>
+          <div class="corp-cost">Cost: ~1 Groq call/pipeline run</div>
+        </div>
+
+        <div class="corp-card">
+          <div class="corp-name">&#x1F608; Contrarian (Taleb)</div>
+          <div class="corp-role">Adversarial Reviewer</div>
+          <div class="corp-desc">Fires when agents pass ATHENA. Mandated to find flaws. Fragility score 0.0-1.0 (antifragile/moderate/fragile). Proposes stress-test configs with tighter constraints. Verdict: fragile | antifragile | inconclusive.</div>
+          <div class="corp-cost">Cost: ~1 Groq call/trigger</div>
+        </div>
+
+        <div class="corp-card">
+          <div class="corp-name">&#x1F50D; Innovation Scout</div>
+          <div class="corp-role">Tool & Technique Discovery</div>
+          <div class="corp-desc">Weekly search for new libraries, techniques, research papers. Evaluates relevance, integration effort, priority. Categories: library, technique, research, data_source. Produces innovation briefs.</div>
+          <div class="corp-cost">Cost: ~1 Groq call/week</div>
+        </div>
+
+        <div class="corp-card">
+          <div class="corp-name">&#x1F6A8; Risk Manager</div>
+          <div class="corp-role">Circuit Breaker Enforcement</div>
+          <div class="corp-desc">Processes CHIMERA diagnostic actions: alert, reduce_allocation (25-50% cut), flatten_positions, shutdown_agent. Backtesting: log only. Forward test: enforce. Caps reductions at 90% min allocation.</div>
+          <div class="corp-cost">Cost: $0 (pure Python)</div>
+        </div>
+
+        <div class="corp-card">
+          <div class="corp-name">&#x1F50E; Operations Monitor</div>
+          <div class="corp-role">Training Watchdog</div>
+          <div class="corp-desc">Runs every generation. Scans for anti-patterns (divergence, stagnation, overfitting, exploding rewards). Auto-fixes when safe. Submits proposals for manual review. Health score 0.0-1.0.</div>
+          <div class="corp-cost">Cost: $0 (pure Python)</div>
+        </div>
+
+        <div class="corp-card">
+          <div class="corp-name">&#x1F4BB; Senior Dev</div>
+          <div class="corp-role">Config Regression Prevention</div>
+          <div class="corp-desc">Maintains blacklist of failed configs (SHA256, Parquet-backed). Pre-pipeline validation. Post-pipeline regression check (&gt;50% perf drop). Ticker patch review: obs space, churn, sector concentration. Deduplication.</div>
+          <div class="corp-cost">Cost: $0 (pure Python)</div>
+        </div>
+
+        <div class="corp-card">
+          <div class="corp-name">&#x1F464; CEO Interface</div>
+          <div class="corp-role">Natural Language Commands</div>
+          <div class="corp-desc">Chat interface for human operator. Commands: add/remove tickers, tighten/loosen risk, show status, approve/reject proposals. LLM intent parsing with regex fast-path. Sector switching presets.</div>
+          <div class="corp-cost">Cost: ~1 Groq call/command</div>
+        </div>
+
+      </div>
+
+      <!-- LLM Stack -->
+      <div class="gen-loop" style="margin-top:24px">
+        <h3>&#x1F4AC; LLM Stack</h3>
+        <div class="gen-steps">
+          <div class="gen-step highlight" style="border-left-color:#3fb950"><span class="step-num">1</span><span class="step-text">Primary: Groq (Llama 3.3 70B Versatile) &mdash; free tier, no credit card</span><span class="step-class">GROQ_API_KEY</span></div>
+          <div class="gen-step"><span class="step-num">2</span><span class="step-text">Fallback: Anthropic (Claude 3 Haiku) &mdash; if Groq unavailable</span><span class="step-class">ANTHROPIC_API_KEY</span></div>
+          <div class="gen-step"><span class="step-num">3</span><span class="step-text">Final fallback: Rule-based analysis (no LLM needed)</span><span class="step-class">keyword matching</span></div>
+        </div>
+        <p style="color:#8b949e;font-size:0.82em;margin-top:12px">Pure urllib &mdash; no SDK dependencies. User-Agent header required for Groq (Cloudflare). JSON response parsing with markdown fence stripping.</p>
+      </div>
+    </div>
+  </div>
+</section>
+<hr class="section-divider">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- DATA LAYER                                                  -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="data">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(210,153,34,0.1)">&#x1F4BE;</div>
+      <h2>Data Layer</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+
+      <div class="data-flow-grid">
+
+        <!-- Market Data -->
+        <div class="data-pipe" style="border-color:#d29922">
+          <h4><span style="color:#d29922">&#x1F4CA;</span> Market Data (OHLCV)</h4>
+          <div class="pipe-steps">
+            <div class="pipe-step"><span class="pipe-icon">&#x1F310;</span><span class="pipe-label">Alpaca API (IEX feed)</span><span class="pipe-format">REST</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x25BC;</span><span class="pipe-label">DataAdapter (cache check)</span><span class="pipe-format">.py</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x1F4BE;</span><span class="pipe-label">Parquet cache (bars_cache/)</span><span class="pipe-format">.parquet</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x25BC;</span><span class="pipe-label">FeatureStore (indicators)</span><span class="pipe-format">.npz</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x1F9EE;</span><span class="pipe-label">SharedMarketData (numpy)</span><span class="pipe-format">float32</span></div>
+          </div>
+        </div>
+
+        <!-- News Data -->
+        <div class="data-pipe" style="border-color:#8957e5">
+          <h4><span style="color:#bc8cff">&#x1F4F0;</span> News & Regime Data</h4>
+          <div class="pipe-steps">
+            <div class="pipe-step"><span class="pipe-icon">&#x1F310;</span><span class="pipe-label">NewsAPI (38+ headlines)</span><span class="pipe-format">REST</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x1F310;</span><span class="pipe-label">Finnhub (100+ headlines)</span><span class="pipe-format">REST</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x1F4E1;</span><span class="pipe-label">RSS feeds (fallback)</span><span class="pipe-format">XML</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x25BC;</span><span class="pipe-label">Groq LLM (Llama 3.3 70B)</span><span class="pipe-format">JSON</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x1F30D;</span><span class="pipe-label">Regime classification</span><span class="pipe-format">state.json</span></div>
+          </div>
+        </div>
+
+        <!-- Macro Data -->
+        <div class="data-pipe" style="border-color:#1b7c83">
+          <h4><span style="color:#39d2c0">&#x1F3E6;</span> Macro & Fundamentals</h4>
+          <div class="pipe-steps">
+            <div class="pipe-step"><span class="pipe-icon">&#x1F310;</span><span class="pipe-label">FRED (Federal Reserve)</span><span class="pipe-format">REST</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x1F4BE;</span><span class="pipe-label">fred_cache/ (30d TTL)</span><span class="pipe-format">.json</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x1F310;</span><span class="pipe-label">SEC 13F filings</span><span class="pipe-format">XML</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x1F310;</span><span class="pipe-label">Hedge fund consensus</span><span class="pipe-format">dict</span></div>
+            <div class="pipe-step"><span class="pipe-icon">&#x1F4CA;</span><span class="pipe-label">Agent context enrichment</span><span class="pipe-format">MarketContext</span></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Cache Stats -->
+      <div class="gen-loop" style="margin-top:24px">
+        <h3>&#x1F4C1; Cache Architecture</h3>
+        <table class="params-table">
+          <tr><th>Cache</th><th>Location</th><th>Format</th><th>TTL</th><th>Purpose</th></tr>
+          <tr><td>Bar data</td><td>data/bars_cache/</td><td>Parquet</td><td>Permanent</td><td>Historical OHLCV (download once)</td></tr>
+          <tr><td>Features</td><td>data/cache/</td><td>NumPy .npz</td><td>Permanent</td><td>Computed indicators (RSI, MACD, etc.)</td></tr>
+          <tr><td>FRED macro</td><td>data/fred_cache/</td><td>JSON</td><td>30 days</td><td>Economic indicators</td></tr>
+          <tr><td>HMM model</td><td>logs/hmm_model.pkl</td><td>Pickle</td><td>Weekly retrain</td><td>Regime detection model</td></tr>
+          <tr><td>Corp state</td><td>logs/corporation_state.json</td><td>JSON</td><td>Live</td><td>Messages, proposals, regime</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+<hr class="section-divider">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- CURRICULUM TRAINING                                         -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="curriculum">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(35,134,54,0.1)">&#x1F393;</div>
+      <h2>Curriculum Training (2020&ndash;2026)</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+      <p style="color:#8b949e;margin-bottom:20px">
+        Progressive lookback expansion trains agents across increasingly complex market history.
+        Each stage resumes from the previous checkpoint. 10 sector ETFs (XLK, XLF, XLE, XLV, XLI, XLU, XLP, XLY, XLB, XLRE).
+      </p>
+
+      <div class="curriculum-track">
+        <div class="stage-block s1">
+          <div class="stage-num">1</div>
+          <div class="stage-title">Recent Regime</div>
+          <div class="stage-days">504 days</div>
+          <div class="stage-desc">2024&ndash;2026: Tariffs, AI boom/correction, current instability</div>
+          <div class="stage-config">40 gens &times; 70 eps</div>
+        </div>
+        <div class="stage-arrow">&#x27A1;</div>
+        <div class="stage-block s2">
+          <div class="stage-num">2</div>
+          <div class="stage-title">Bear + Recovery</div>
+          <div class="stage-days">1,008 days</div>
+          <div class="stage-desc">2022&ndash;2026: Rate hike bear, AI rally, correction</div>
+          <div class="stage-config">40 gens &times; 70 eps</div>
+        </div>
+        <div class="stage-arrow">&#x27A1;</div>
+        <div class="stage-block s3">
+          <div class="stage-num">3</div>
+          <div class="stage-title">Full Spectrum</div>
+          <div class="stage-days">1,512 days</div>
+          <div class="stage-desc">2020&ndash;2026: COVID crash, stimulus rally, bear market, AI boom, crisis</div>
+          <div class="stage-config">40 gens &times; 70 eps</div>
+        </div>
+      </div>
+
+      <div class="connection-desc">
+        Total: <strong>120 generations &times; 70 episodes = 8,400 episodes</strong> across 3 stages.<br>
+        Auto reward tuning active. Checkpoints chain between stages. All data cached locally after first download.
+      </div>
+    </div>
+  </div>
+</section>
+<hr class="section-divider">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- FORWARD TEST                                                -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="forward-test">
+  <div class="container">
+    <div class="section-header" onclick="toggleSection(this)">
+      <div class="icon" style="background:rgba(218,54,51,0.1)">&#x1F680;</div>
+      <h2>Forward Test & Deployment Path</h2>
+      <span class="toggle">&#x25BC;</span>
+    </div>
+    <div class="section-content">
+
+      <div class="grad-path">
+        <div class="grad-node" style="border-color:#1f6feb">
+          <div class="grad-icon">&#x1F3CB;</div>
+          <div class="grad-label">Training</div>
+          <div class="grad-sub">120 gens, 3 stages</div>
+        </div>
+        <div class="grad-arrow">&#x2192;</div>
+        <div class="grad-node" style="border-color:#d29922">
+          <div class="grad-icon">&#x1F6E1;</div>
+          <div class="grad-label">ATHENA</div>
+          <div class="grad-sub">Walk-forward, PSR/DSR</div>
+        </div>
+        <div class="grad-arrow">&#x2192;</div>
+        <div class="grad-node" style="border-color:#8957e5">
+          <div class="grad-icon">&#x1F608;</div>
+          <div class="grad-label">Contrarian</div>
+          <div class="grad-sub">Fragility review</div>
+        </div>
+        <div class="grad-arrow">&#x2192;</div>
+        <div class="grad-node active">
+          <div class="grad-icon">&#x1F4B5;</div>
+          <div class="grad-label">Forward Test</div>
+          <div class="grad-sub">Paper trading 60d</div>
+        </div>
+        <div class="grad-arrow">&#x2192;</div>
+        <div class="grad-node" style="border-color:#da3633">
+          <div class="grad-icon">&#x1F4B0;</div>
+          <div class="grad-label">Live Trading</div>
+          <div class="grad-sub">Broker execution</div>
+        </div>
+      </div>
+
+      <div class="gen-loop">
+        <h3>&#x1F4B5; Forward Test Runner</h3>
+        <div class="gen-steps">
+          <div class="gen-step"><span class="step-num">1</span><span class="step-text">Load StaticAgent checkpoints (top ATHENA-passed agents)</span><span class="step-class">ForwardTestRunner</span></div>
+          <div class="gen-step"><span class="step-num">2</span><span class="step-text">Allocate capital per agent proportional to Sharpe ratio</span><span class="step-class">CapitalAllocator</span></div>
+          <div class="gen-step"><span class="step-num">3</span><span class="step-text">Poll live bars every 5 minutes during market hours</span><span class="step-class">LiveStateBuilder</span></div>
+          <div class="gen-step"><span class="step-num">4</span><span class="step-text">Build observation vector from live data + indicators</span><span class="step-class">obs: 17N+5</span></div>
+          <div class="gen-step"><span class="step-num">5</span><span class="step-text">Agent selects action &rarr; translate to position target</span><span class="step-class">select_action()</span></div>
+          <div class="gen-step"><span class="step-num">6</span><span class="step-text">Execute via Alpaca sandbox (paper trading)</span><span class="step-class">SubAccount</span></div>
+          <div class="gen-step"><span class="step-num">7</span><span class="step-text">Track slippage, PnL, Sharpe retention, daily loss alerts</span><span class="step-class">ForwardTestTracker</span></div>
+        </div>
+        <p style="color:#8b949e;font-size:0.82em;margin-top:12px">
+          Graduation criteria: Sharpe retention &ge; 50% of backtest, drawdown tolerance 1.5&times; backtest max DD, 60-day duration.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- FOOTER                                                      -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<footer style="text-align:center;padding:48px 24px;color:#484f58;font-size:0.85em;border-top:1px solid #21262d">
+  <p>HYDRA System Architecture &mdash; Generated March 2026</p>
+  <p style="margin-top:4px">Multi-Agent Reinforcement Learning Trading System</p>
+</footer>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- JS: Section Toggle                                          -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<script>
+function toggleSection(header) {
+  const content = header.nextElementSibling;
+  const toggle = header.querySelector('.toggle');
+  if (content.style.maxHeight && content.style.maxHeight !== '0px') {
+    content.style.maxHeight = '0px';
+    toggle.classList.add('collapsed');
+  } else {
+    content.style.maxHeight = content.scrollHeight + 'px';
+    toggle.classList.remove('collapsed');
+  }
+}
+
+// Initialize all sections as open
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.section-content').forEach(el => {
+    el.style.maxHeight = el.scrollHeight + 'px';
+  });
+
+  // Smooth scroll for nav links
+  document.querySelectorAll('.nav a').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const target = document.querySelector(a.getAttribute('href'));
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  });
+
+  // Highlight active nav on scroll
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('.nav a');
+  window.addEventListener('scroll', () => {
+    let current = '';
+    sections.forEach(s => {
+      if (window.scrollY >= s.offsetTop - 100) current = s.id;
+    });
+    navLinks.forEach(a => {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+    });
+  });
+});
+</script>
+</body>
+</html>

@@ -203,6 +203,17 @@ class ChiefOfStaff(BaseCorpAgent):
         dollar_pnl = starting_capital * best_return
         excess = last_result.get("excess_return", 0)
 
+        # Check for roadmap triggers
+        roadmap_reminders = []
+        from pathlib import Path
+        roadmap_file = Path(__file__).parent.parent.parent / "docs" / "ROADMAP_strategic_intelligence.md"
+        curriculum_results = Path(__file__).parent.parent.parent / "logs" / "curriculum_results.json"
+        if roadmap_file.exists() and curriculum_results.exists():
+            roadmap_reminders.append(
+                "Strategic Intelligence Layer ready to build — "
+                "see docs/ROADMAP_strategic_intelligence.md"
+            )
+
         return {
             "portfolio_value_cad": round(portfolio_value, 2),
             "total_return_pct": round(best_return * 100, 2),
@@ -217,4 +228,5 @@ class ChiefOfStaff(BaseCorpAgent):
                 m for m in corp_state.get("messages", [])[-10:]
                 if m.get("msg_type") == "alert"
             ],
+            "roadmap_reminders": roadmap_reminders,
         }

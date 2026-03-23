@@ -249,6 +249,40 @@ def _load_training_state() -> dict:
         return json.load(f)
 
 
+def _check_roadmap_triggers(ts: dict, corp_state: dict) -> list[str]:
+    """Check if roadmap items should be surfaced based on system state."""
+    items = []
+    summary = ts.get("summary", {})
+    total_gens = summary.get("total_generations", 0)
+    regime = corp_state.get("regime", {})
+    regime_class = regime.get("classification", "unknown")
+
+    # Strategic Intelligence Layer — trigger after curriculum training completes
+    # or after sufficient geopolitics expert runs
+    roadmap_file = _ROOT / "docs" / "ROADMAP_strategic_intelligence.md"
+    if roadmap_file.exists():
+        geo_runs = sum(
+            1 for m in corp_state.get("messages", [])
+            if m.get("sender") == "geopolitics_expert"
+        )
+        curriculum_done = (_ROOT / "logs" / "curriculum_results.json").exists()
+
+        if curriculum_done:
+            items.append(
+                "Strategic Intelligence Layer ready to build — curriculum "
+                "training complete. See docs/ROADMAP_strategic_intelligence.md "
+                "(thesis library: 12 priority thinkers, 15+ tier-2)"
+            )
+        elif total_gens >= 80:
+            items.append(
+                "Approaching readiness for Strategic Intelligence Layer "
+                f"({total_gens} gens complete). Review roadmap: "
+                "docs/ROADMAP_strategic_intelligence.md"
+            )
+
+    return items
+
+
 def _tool_get_system_status(_input: dict) -> str:
     global _config
     config_dict = _config.model_dump()
@@ -291,6 +325,14 @@ def _tool_get_system_status(_input: dict) -> str:
 
     tickers = config_dict.get("data", {}).get("tickers", [])
     lines.append(f"Tickers ({len(tickers)}): {', '.join(tickers)}")
+
+    # Roadmap reminders — surface when trigger conditions are met
+    roadmap_items = _check_roadmap_triggers(ts, corp_state)
+    if roadmap_items:
+        lines.append("")
+        lines.append("ROADMAP REMINDERS:")
+        for item in roadmap_items:
+            lines.append(f"  >> {item}")
 
     return "\n".join(lines)
 

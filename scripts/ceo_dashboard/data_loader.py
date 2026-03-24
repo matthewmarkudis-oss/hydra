@@ -41,25 +41,46 @@ def load_dashboard_data() -> dict[str, Any]:
     summary = training.get("summary", {})
     config = training.get("config", {})
 
-    # Find best agent
+    # Find best agent — use None sentinel so negative returns still register
     best_agent = ""
-    best_return = 0.0
+    best_return = None
     for name, metrics in validation.items():
         total_return = metrics.get("total_return", 0)
-        if total_return > best_return:
+        if best_return is None or total_return > best_return:
             best_return = total_return
             best_agent = name
 
-    if not validation:
-        # No validation data yet — use eval scores from generations if available
-        if generations:
-            last_gen = generations[-1]
+    has_real_pnl = bool(validation)
+
+    if not validation and generations:
+        # No validation data — try agent_pnl, then best_return_pct, then eval_scores
+        last_gen = generations[-1]
+        agent_pnl = last_gen.get("agent_pnl", {})
+        if agent_pnl:
+            has_real_pnl = True
+            for name, pnl_data in agent_pnl.items():
+                ret_pct = pnl_data.get("mean_return_pct", 0.0)
+                ret_ratio = ret_pct / 100.0
+                if best_return is None or ret_ratio > best_return:
+                    best_return = ret_ratio
+                    best_agent = name
+        elif last_gen.get("best_return_pct") is not None:
+            has_real_pnl = True
+            best_return = last_gen["best_return_pct"] / 100.0
             eval_scores = last_gen.get("eval_scores", {})
             if eval_scores:
-                for name, score in eval_scores.items():
-                    if score > best_return:
-                        best_return = score / 100.0  # Scores are scaled, approximate
-                        best_agent = name
+                best_agent = max(eval_scores, key=eval_scores.get)
+        else:
+            # Final fallback: use eval_scores — NOT real P&L
+            has_real_pnl = False
+            eval_scores = last_gen.get("eval_scores", {})
+            if eval_scores:
+                best_name = max(eval_scores, key=eval_scores.get)
+                best_return = 0.0  # Don't fake P&L from reward scores
+                best_agent = best_name
+
+    if best_return is None:
+        best_return = 0.0
 
     # Forward-test allocation data (if a graduation proposal exists)
     ft_allocations = []
@@ -72,20 +93,43 @@ def load_dashboard_data() -> dict[str, Any]:
 
     # Build agent leaderboard
     leaderboard = []
-    for name, metrics in validation.items():
-        total_return = metrics.get("total_return", 0)
-        leaderboard.append({
-            "name": friendly_name(name),
-            "internal_name": name,
-            "return_pct": round(total_return * 100, 2),
-            "return_cad": round(compute_dollar_pnl(total_return), 2),
-            "sharpe": round(metrics.get("sharpe", 0), 2),
-            "max_drawdown_pct": round(abs(metrics.get("max_drawdown", 0)) * 100, 2),
-            "win_rate_pct": round(metrics.get("win_rate", 0) * 100, 1),
-            "profit_factor": round(metrics.get("profit_factor", 0), 2),
-            "passed": metrics.get("passed", False),
-            "is_best": name == best_agent,
-        })
+    if validation:
+        for name, metrics in validation.items():
+            total_return = metrics.get("total_return", 0)
+            leaderboard.append({
+                "name": friendly_name(name),
+                "internal_name": name,
+                "return_pct": round(total_return * 100, 2),
+                "return_cad": round(compute_dollar_pnl(total_return), 2),
+                "sharpe": round(metrics.get("sharpe", 0), 2),
+                "max_drawdown_pct": round(abs(metrics.get("max_drawdown", 0)) * 100, 2),
+                "win_rate_pct": round(metrics.get("win_rate", 0) * 100, 1),
+                "profit_factor": round(metrics.get("profit_factor", 0), 2),
+                "passed": metrics.get("passed", False),
+                "is_best": name == best_agent,
+            })
+    elif generations:
+        # Build leaderboard from latest generation's agent_pnl
+        last_gen = generations[-1]
+        agent_pnl = last_gen.get("agent_pnl", {})
+        eval_scores = last_gen.get("eval_scores", {})
+        for name, pnl_data in agent_pnl.items():
+            ret_pct = pnl_data.get("mean_return_pct", 0.0)
+            cash_ratio = pnl_data.get("mean_cash_ratio", 1.0)
+            deployed = 1.0 - cash_ratio
+            leaderboard.append({
+                "name": friendly_name(name),
+                "internal_name": name,
+                "return_pct": round(ret_pct, 3),
+                "return_cad": round(compute_dollar_pnl(ret_pct / 100.0), 2),
+                "sharpe": round(eval_scores.get(name, 0) / 100.0, 2),
+                "max_drawdown_pct": 0.0,
+                "win_rate_pct": round(deployed * 100, 1),
+                "profit_factor": 0.0,
+                "passed": ret_pct > 0 and deployed > 0.2,
+                "is_best": name == best_agent,
+            })
+
     # Enrich leaderboard with allocation data
     alloc_lookup = {a.get("agent_name", ""): a for a in ft_allocations}
     for entry in leaderboard:
@@ -104,6 +148,28 @@ def load_dashboard_data() -> dict[str, Any]:
     max_dd = abs(best_metrics.get("max_drawdown", 0))
     win_rate = best_metrics.get("win_rate", 0)
     profit_factor = best_metrics.get("profit_factor", 0)
+
+    if not validation and generations:
+        # Derive risk proxies from generation P&L history
+        gen_returns = [
+            g.get("best_return_pct", 0) for g in generations
+            if g.get("best_return_pct") is not None
+        ]
+        if gen_returns:
+            profitable_gens = sum(1 for r in gen_returns if r > 0)
+            win_rate = profitable_gens / len(gen_returns)
+            # Estimate profit factor from mean positive vs mean negative returns
+            pos = [r for r in gen_returns if r > 0]
+            neg = [abs(r) for r in gen_returns if r < 0]
+            if pos and neg:
+                profit_factor = (sum(pos) / len(pos)) / max(sum(neg) / len(neg), 0.01)
+            elif pos:
+                profit_factor = 3.0  # All profitable, cap at 3.0
+            # Rough max drawdown from worst generation return
+            worst = min(gen_returns)
+            if worst < 0:
+                max_dd = abs(worst) / 100.0  # Convert from % to ratio
+
     safety = compute_safety_score(max_dd, win_rate, profit_factor)
 
     # Alerts from generation history
@@ -116,6 +182,30 @@ def load_dashboard_data() -> dict[str, Any]:
     # Build generation history for charts
     gen_history = _build_generation_history(generations)
 
+    # === Current Generation metrics ===
+    current_gen = _compute_current_gen(generations, gen_history)
+
+    # === All-Time Best metrics ===
+    all_time_best = _compute_all_time_best(generations, gen_history)
+
+    # === Generation Scorecard (from generation_scorer) ===
+    scorecard = _compute_scorecard(generations)
+
+    # Compute period P&L (annualized, monthly, daily) from the backtest window
+    lookback_days = config.get("lookback_days", 60) or 60
+    pnl_per_day = compute_dollar_pnl(best_return) / max(lookback_days, 1) if has_real_pnl else 0.0
+    pnl_per_month = pnl_per_day * 21  # ~21 trading days per month
+    pnl_per_year = pnl_per_day * 252   # ~252 trading days per year
+
+    # Best eval score (always available even without P&L)
+    best_eval_score = 0.0
+    best_eval_agent = ""
+    if generations:
+        last_es = generations[-1].get("eval_scores", {})
+        if last_es:
+            best_eval_agent = max(last_es, key=last_es.get)
+            best_eval_score = last_es[best_eval_agent]
+
     return {
         # Hero KPIs
         "portfolio_value": round(compute_portfolio_value(best_return), 2),
@@ -127,6 +217,15 @@ def load_dashboard_data() -> dict[str, Any]:
         "excess_return_pct": round(excess_return * 100, 2),
         "excess_label": f"{'+'if excess_return > 0 else ''}{excess_return * 100:.1f}% {'ahead' if excess_return > 0 else 'behind'}",
 
+        # P&L periods
+        "has_real_pnl": has_real_pnl,
+        "lookback_days": lookback_days,
+        "pnl_per_day": round(pnl_per_day, 2),
+        "pnl_per_month": round(pnl_per_month, 2),
+        "pnl_per_year": round(pnl_per_year, 2),
+        "best_eval_score": round(best_eval_score, 1),
+        "best_eval_agent": friendly_name(best_eval_agent),
+
         # Risk
         "safety_score": safety,
         "max_drawdown_pct": round(max_dd * 100, 2),
@@ -137,7 +236,7 @@ def load_dashboard_data() -> dict[str, Any]:
         # Tables
         "leaderboard": leaderboard,
         "passed_count": len(summary.get("passed_agents", [])),
-        "total_agents": len(validation),
+        "total_agents": len(validation) or len(leaderboard),
 
         # Alerts
         "alerts": alerts,
@@ -159,6 +258,7 @@ def load_dashboard_data() -> dict[str, Any]:
         # Training status
         "updated": training.get("updated", "N/A"),
         "total_generations": summary.get("total_generations", 0),
+        "target_generations": config.get("num_generations", 0) or summary.get("total_generations", 0),
         "tickers": config.get("tickers", []),
         "num_stocks": config.get("num_stocks", 0),
         "real_data": config.get("real_data", False),
@@ -171,7 +271,170 @@ def load_dashboard_data() -> dict[str, Any]:
 
         # Corp recommendations
         "corp_recommendations": corp_recs,
+
+        # Computed sections for two-row KPI layout
+        "current_gen": current_gen,
+        "all_time_best": all_time_best,
+        "scorecard": scorecard,
+
+        # Conviction data from latest generation
+        "conviction": generations[-1].get("conviction", {}) if generations else {},
+
+        # Geopolitics ticker
+        "geopolitics": _load_geopolitics_ticker(corp),
     }
+
+
+def _compute_current_gen(generations: list[dict], gen_history: list[dict]) -> dict:
+    """Compute current-generation KPI data from latest generation."""
+    if not generations:
+        return {}
+
+    last = generations[-1]
+    agent_pnl = last.get("agent_pnl", {})
+    eval_scores = last.get("eval_scores", {})
+    diag = last.get("diagnosis") or {}
+
+    # Best return this generation (from agent_pnl or eval_scores proxy)
+    best_return_pct = last.get("best_return_pct")
+    mean_return_pct = last.get("mean_return_pct")
+    best_agent = ""
+
+    if agent_pnl:
+        best_name = max(agent_pnl, key=lambda a: agent_pnl[a].get("mean_return_pct", 0))
+        best_return_pct = agent_pnl[best_name].get("mean_return_pct", 0.0)
+        best_agent = best_name
+        if mean_return_pct is None:
+            rets = [p.get("mean_return_pct", 0) for p in agent_pnl.values()]
+            mean_return_pct = sum(rets) / len(rets) if rets else 0.0
+    elif eval_scores:
+        best_name = max(eval_scores, key=eval_scores.get)
+        # eval_scores are reward values — don't pretend they are return %
+        best_agent = best_name
+        if best_return_pct is None:
+            best_return_pct = 0.0  # No real P&L available
+        if mean_return_pct is None:
+            mean_return_pct = 0.0
+
+    # Deployment % from best agent
+    deployed_pct = 0.0
+    if agent_pnl and best_agent in agent_pnl:
+        cash_ratio = agent_pnl[best_agent].get("mean_cash_ratio", 1.0)
+        deployed_pct = (1.0 - cash_ratio) * 100.0
+
+    # Scorecard verdict
+    try:
+        from corp.agents.generation_scorer import score_generation
+        prev_gens = generations[:-1] if len(generations) > 1 else []
+        sc = score_generation(last, prev_gens)
+        verdict = sc.get("verdict", "")
+    except Exception:
+        verdict = ""
+
+    # Best eval score (always available)
+    best_eval_score = 0.0
+    if eval_scores:
+        best_eval_score = max(eval_scores.values())
+
+    return {
+        "gen_num": last.get("generation", 0),
+        "best_return_pct": round(best_return_pct or 0.0, 3),
+        "mean_return_pct": round(mean_return_pct or 0.0, 3),
+        "best_agent": best_agent,
+        "pool_size": last.get("pool_size", 0),
+        "deployed_pct": round(deployed_pct, 1),
+        "severity": diag.get("severity", ""),
+        "verdict": verdict,
+        "best_eval": round(best_eval_score, 1),
+        "has_real_pnl": bool(agent_pnl) or last.get("best_return_pct") is not None,
+    }
+
+
+def _compute_all_time_best(generations: list[dict], gen_history: list[dict]) -> dict:
+    """Compute all-time best metrics across all generations.
+
+    Tracks real P&L separately from eval scores. Never fakes P&L from
+    reward values — instead provides both so the dashboard can display
+    whichever is available.
+    """
+    if not generations:
+        return {}
+
+    best_return_pct = None  # Real P&L (from agent_pnl or best_return_pct)
+    best_return_agent = ""
+    best_return_gen = 0
+    best_eval = None  # Eval reward score (always available)
+    best_eval_agent = ""
+    best_eval_gen = 0
+    has_real_pnl = False
+    profitable_gens = 0
+    total_gens = len(generations)
+
+    for g in generations:
+        gen_num = g.get("generation", 0)
+        agent_pnl = g.get("agent_pnl", {})
+        eval_scores = g.get("eval_scores", {})
+        ret_pct = g.get("best_return_pct")
+
+        # Track best REAL return (only from actual P&L data)
+        gen_real_return = None
+        gen_real_agent = ""
+
+        if agent_pnl:
+            has_real_pnl = True
+            top_name = max(agent_pnl, key=lambda a: agent_pnl[a].get("mean_return_pct", 0))
+            gen_real_return = agent_pnl[top_name].get("mean_return_pct", 0.0)
+            gen_real_agent = top_name
+        elif ret_pct is not None:
+            has_real_pnl = True
+            gen_real_return = ret_pct
+            if eval_scores:
+                gen_real_agent = max(eval_scores, key=eval_scores.get)
+
+        if gen_real_return is not None:
+            if gen_real_return > 0:
+                profitable_gens += 1
+            if best_return_pct is None or gen_real_return > best_return_pct:
+                best_return_pct = gen_real_return
+                best_return_agent = gen_real_agent
+                best_return_gen = gen_num
+
+        # Track best EVAL score (always available)
+        if eval_scores:
+            top_name = max(eval_scores, key=eval_scores.get)
+            top_score = eval_scores[top_name]
+            if top_score > 0 and not has_real_pnl:
+                profitable_gens += 1  # Count positive eval as "profitable" when no P&L
+            if best_eval is None or top_score > best_eval:
+                best_eval = top_score
+                best_eval_agent = top_name
+                best_eval_gen = gen_num
+
+    # Use real P&L if available, otherwise leave as None (dashboard shows eval scores)
+    return {
+        "best_return_pct": round(best_return_pct, 3) if best_return_pct is not None else None,
+        "best_agent": best_return_agent or friendly_name(best_eval_agent),
+        "best_gen": best_return_gen or best_eval_gen,
+        "has_real_pnl": has_real_pnl,
+        "best_eval": round(best_eval or 0.0, 1),
+        "best_eval_agent": friendly_name(best_eval_agent),
+        "best_eval_gen": best_eval_gen,
+        "profitable_gens": profitable_gens,
+        "total_gens": total_gens,
+    }
+
+
+def _compute_scorecard(generations: list[dict]) -> dict:
+    """Compute generation scorecard from the latest generation."""
+    if not generations:
+        return {}
+    try:
+        from corp.agents.generation_scorer import score_generation
+        last = generations[-1]
+        prev = generations[:-1] if len(generations) > 1 else []
+        return score_generation(last, prev)
+    except Exception:
+        return {}
 
 
 def _build_generation_history(generations: list[dict]) -> list[dict]:
@@ -497,6 +760,62 @@ def _load_corp_recommendations(corp: dict | None) -> list[dict]:
     return deduped
 
 
+def _load_geopolitics_ticker(corp: dict | None) -> dict[str, Any]:
+    """Load geopolitics regime data for the news ticker.
+
+    Pulls the current regime from corporation_state.json and the history
+    of regime classifications from corporation_decisions.jsonl.
+    """
+    result: dict[str, Any] = {
+        "current_regime": "",
+        "confidence": 0.0,
+        "volatility_outlook": "",
+        "summary": "",
+        "ticker_recs": {},
+        "updated": "",
+        "history": [],
+    }
+
+    # Current regime from corp state
+    if corp:
+        regime = corp.get("regime", {})
+        result["current_regime"] = regime.get("classification", "")
+        result["confidence"] = regime.get("confidence", 0.0)
+        result["volatility_outlook"] = regime.get("volatility_outlook", "")
+        result["summary"] = regime.get("summary", "")
+        result["ticker_recs"] = regime.get("ticker_recommendations", {})
+        result["updated"] = regime.get("updated", "")
+
+    # Regime history from decisions log
+    log_path = Path("logs/corporation_decisions.jsonl")
+    if not log_path.exists():
+        log_path = Path(__file__).parent.parent.parent / "logs" / "corporation_decisions.jsonl"
+
+    if log_path.exists():
+        try:
+            with open(log_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if entry.get("agent") == "geopolitics_expert" and entry.get("action") == "regime_classification":
+                        detail = entry.get("detail", {})
+                        result["history"].append({
+                            "timestamp": entry.get("timestamp", ""),
+                            "regime": detail.get("regime", ""),
+                            "confidence": detail.get("confidence", 0.0),
+                            "headlines": detail.get("headlines", 0),
+                        })
+        except OSError:
+            pass
+
+    return result
+
+
 def _load_forward_test_data() -> dict[str, Any]:
     """Load forward test log and state for dashboard display."""
     result = {
@@ -636,6 +955,13 @@ def _empty_data() -> dict[str, Any]:
         "spy_return_pct": 0.0,
         "excess_return_pct": 0.0,
         "excess_label": "No data",
+        "has_real_pnl": False,
+        "lookback_days": 60,
+        "pnl_per_day": 0.0,
+        "pnl_per_month": 0.0,
+        "pnl_per_year": 0.0,
+        "best_eval_score": 0.0,
+        "best_eval_agent": "",
         "safety_score": 50,
         "max_drawdown_pct": 0.0,
         "max_drawdown_cad": 0.0,
@@ -653,9 +979,18 @@ def _empty_data() -> dict[str, Any]:
         "benchmark": {"spy_return_pct": 0, "spy_drawdown_pct": 0, "spy_sharpe": 0},
         "updated": "N/A",
         "total_generations": 0,
+        "target_generations": 0,
         "tickers": [],
         "num_stocks": 0,
         "real_data": False,
         "corp": {},
         "forward_test": _load_forward_test_data(),
+        "current_gen": {},
+        "all_time_best": {},
+        "scorecard": {},
+        "conviction": {},
+        "geopolitics": {
+            "current_regime": "", "confidence": 0.0, "volatility_outlook": "",
+            "summary": "", "ticker_recs": {}, "updated": "", "history": [],
+        },
     }

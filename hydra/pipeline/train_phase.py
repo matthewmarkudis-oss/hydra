@@ -191,6 +191,44 @@ def run_training(
     }
 
 
+def _validate_agent_startup(agent, obs_dim: int, action_dim: int) -> bool:
+    """Verify an agent can produce valid actions before entering the pool.
+
+    Checks:
+    1. select_action() doesn't throw
+    2. Output shape matches action_dim
+    3. No NaN/Inf in output
+    """
+    import numpy as np
+    try:
+        dummy_obs = np.random.randn(obs_dim).astype(np.float32)
+        action = agent.select_action(dummy_obs, deterministic=True)
+
+        if action.shape != (action_dim,):
+            logger.error(
+                f"REJECTED: Agent '{agent.name}' action shape "
+                f"{action.shape} != ({action_dim},)"
+            )
+            return False
+        if np.any(np.isnan(action)) or np.any(np.isinf(action)):
+            logger.error(f"REJECTED: Agent '{agent.name}' produced NaN/Inf actions")
+            return False
+
+        logger.info(f"  Startup validation PASSED: '{agent.name}'")
+        return True
+    except Exception as e:
+        logger.error(f"REJECTED: Agent '{agent.name}' startup validation FAILED: {e}")
+        return False
+
+
+def _add_validated(pool: AgentPool, agent, obs_dim: int, action_dim: int) -> None:
+    """Add agent to pool only if it passes startup validation."""
+    if _validate_agent_startup(agent, obs_dim, action_dim):
+        pool.add(agent)
+    else:
+        logger.error(f"Agent '{agent.name}' excluded from pool — failed startup check")
+
+
 def _build_fresh_pool(obs_dim: int, action_dim: int) -> AgentPool:
     """Create a fresh agent pool with default learning + rule-based agents."""
     pool = AgentPool()
@@ -203,28 +241,36 @@ def _build_fresh_pool(obs_dim: int, action_dim: int) -> AgentPool:
     # DirectML's backward pass doesn't properly update weights (gradient
     # chain is broken across CPU fallback ops like aten::std.correction),
     # and SB3 itself warns that MLP policies train faster on CPU anyway.
-    pool.add(PPOAgent("ppo_1", obs_dim, action_dim, net_arch=net_arch, prefer_gpu=False))
-    pool.add(PPOAgent("ppo_2", obs_dim, action_dim, net_arch=[128, 128],
-                       learning_rate=1e-3, ent_coef=0.02, prefer_gpu=False))
-    pool.add(TD3Agent("td3_1", obs_dim, action_dim, net_arch=net_arch, prefer_gpu=False))
-    pool.add(RecurrentPPOAgent("rppo_1", obs_dim, action_dim, prefer_gpu=False))
+    _add_validated(pool, PPOAgent("ppo_1", obs_dim, action_dim, net_arch=net_arch, prefer_gpu=False), obs_dim, action_dim)
+    _add_validated(pool, PPOAgent("ppo_2", obs_dim, action_dim, net_arch=[128, 128],
+                       learning_rate=1e-3, ent_coef=0.02, prefer_gpu=False), obs_dim, action_dim)
+    _add_validated(pool, TD3Agent("td3_1", obs_dim, action_dim, net_arch=net_arch, prefer_gpu=False), obs_dim, action_dim)
+    _add_validated(pool, RecurrentPPOAgent("rppo_1", obs_dim, action_dim, prefer_gpu=False), obs_dim, action_dim)
 
     # CMA-ES — gradient-free evolutionary agent, immune to reward non-stationarity
-    pool.add(CMAESAgent("cmaes_1", obs_dim, action_dim))
+    # Check dependency before construction to give a clear error message
+    try:
+        import cma  # noqa: F401
+        _add_validated(pool, CMAESAgent("cmaes_1", obs_dim, action_dim), obs_dim, action_dim)
+    except ImportError:
+        logger.error(
+            "REJECTED: CMAESAgent requires pycma (pip install cma). "
+            "Agent excluded from pool."
+        )
 
     # Rule-based agents
-    pool.add(RuleBasedAgent(
+    _add_validated(pool, RuleBasedAgent(
         "alpha_rule", obs_dim, action_dim,
         agent_class_path="alpha_momentum.AlphaMomentum",
-    ))
-    pool.add(RuleBasedAgent(
+    ), obs_dim, action_dim)
+    _add_validated(pool, RuleBasedAgent(
         "beta_rule", obs_dim, action_dim,
         agent_class_path="beta_mean_reversion.BetaMeanReversion",
-    ))
-    pool.add(RuleBasedAgent(
+    ), obs_dim, action_dim)
+    _add_validated(pool, RuleBasedAgent(
         "theta_rule", obs_dim, action_dim,
         agent_class_path="theta.ThetaAgent",
-    ))
+    ), obs_dim, action_dim)
 
     return pool
 

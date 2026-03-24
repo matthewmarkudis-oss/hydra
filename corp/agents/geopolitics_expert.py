@@ -81,9 +81,10 @@ class GeopoliticsExpert(BaseCorpAgent):
 
     Responsibilities:
     1. Fetch recent news headlines (free APIs)
-    2. Classify macro regime (risk_on / risk_off / crisis)
-    3. Produce config adjustment recommendations
-    4. Update regime in corporation state
+    2. Cross-reference headlines against curated thesis library
+    3. Classify macro regime (risk_on / risk_off / crisis / antifragile)
+    4. Produce config adjustment recommendations with thesis-informed signals
+    5. Update regime in corporation state
     """
 
     def __init__(
@@ -95,6 +96,14 @@ class GeopoliticsExpert(BaseCorpAgent):
         super().__init__("geopolitics_expert", state, decision_log)
         self._interval_hours = interval_hours
         self._last_fetch: str | None = None
+        self._thesis_library = None
+        try:
+            from corp.data.thesis_library import ThesisLibrary
+            self._thesis_library = ThesisLibrary()
+            if self._thesis_library.count > 0:
+                logger.info(f"Loaded thesis library: {self._thesis_library.count} theses")
+        except Exception as e:
+            logger.debug(f"Thesis library not available: {e}")
 
     def should_run(self) -> bool:
         """Check if enough time has passed since last run."""
@@ -151,6 +160,43 @@ class GeopoliticsExpert(BaseCorpAgent):
             # Rule-based fallback
             result.update(self._rule_based_classification(headlines))
 
+        # Cross-reference headlines against thesis library
+        thesis_xref = {}
+        if self._thesis_library and self._thesis_library.count > 0:
+            thesis_xref = self._thesis_library.cross_reference(headlines)
+            result["thesis_confirmations"] = len(thesis_xref.get("confirmations", []))
+            result["thesis_agreement"] = thesis_xref.get("agreement_matrix", {})
+            result["thesis_sector_signals"] = thesis_xref.get("sector_signals", {})
+
+            # Adjust confidence based on thesis agreement/disagreement
+            conf_adj = thesis_xref.get("confidence_adjustment", 0.0)
+            result["confidence"] = round(
+                min(max(result.get("confidence", 0.5) + conf_adj, 0.0), 1.0), 2
+            )
+
+            # Merge thesis sector signals into ticker recommendations
+            sector_signals = thesis_xref.get("sector_signals", {})
+            if sector_signals:
+                ticker_recs = result.get("ticker_recommendations", {})
+                overweight = set(ticker_recs.get("sectors_to_overweight", []))
+                underweight = set(ticker_recs.get("sectors_to_underweight", []))
+                for sector, score in sector_signals.items():
+                    if score > 0.5:
+                        overweight.add(sector)
+                    elif score < -0.5:
+                        underweight.add(sector)
+                ticker_recs["sectors_to_overweight"] = sorted(overweight)
+                ticker_recs["sectors_to_underweight"] = sorted(underweight)
+                result["ticker_recommendations"] = ticker_recs
+
+            confirmed = thesis_xref.get("confirmations", [])
+            if confirmed:
+                thinkers = list(set(c["thinker"] for c in confirmed))
+                logger.info(
+                    f"Thesis cross-ref: {len(confirmed)} confirmations "
+                    f"from {', '.join(thinkers)}"
+                )
+
         # Update corp state
         self._update_state(result)
         self._last_fetch = datetime.now().isoformat()
@@ -161,6 +207,7 @@ class GeopoliticsExpert(BaseCorpAgent):
                 "regime": result["regime"],
                 "confidence": result["confidence"],
                 "headlines": len(headlines),
+                "thesis_confirmations": result.get("thesis_confirmations", 0),
             },
             outcome=result["regime"],
         )
@@ -436,11 +483,17 @@ class GeopoliticsExpert(BaseCorpAgent):
 
     def _update_state(self, result: dict) -> None:
         """Update the regime in corporation state."""
-        self.state.update_regime({
+        regime_data = {
             "classification": result.get("regime", "unknown"),
             "volatility_outlook": result.get("volatility_outlook", "stable"),
             "sector_bias": result.get("sector_bias", {}),
             "confidence": result.get("confidence", 0.0),
             "summary": result.get("summary", ""),
             "ticker_recommendations": result.get("ticker_recommendations", {}),
-        })
+        }
+        # Include thesis intelligence if available
+        if result.get("thesis_confirmations", 0) > 0:
+            regime_data["thesis_confirmations"] = result["thesis_confirmations"]
+            regime_data["thesis_agreement"] = result.get("thesis_agreement", {})
+            regime_data["thesis_sector_signals"] = result.get("thesis_sector_signals", {})
+        self.state.update_regime(regime_data)

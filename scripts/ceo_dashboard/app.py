@@ -1,6 +1,6 @@
 """Hydra Capital CEO Dashboard — simplified, dollar-focused trading dashboard.
 
-Launch: streamlit run scripts/ceo_dashboard/app.py --server.port 5050
+Launch: streamlit run scripts/ceo_dashboard/app.py --server.port 5010
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 
 import streamlit as st
+import streamlit.components.v1 as components
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -20,7 +21,7 @@ from datetime import datetime
 
 from config import (
     COLORS, STARTING_CAPITAL_CAD, safety_label, REFRESH_INTERVAL_MS,
-    friendly_name, CHART_COLORS,
+    friendly_name, CHART_COLORS, compute_portfolio_value, compute_dollar_pnl,
 )
 from data_loader import load_dashboard_data
 
@@ -32,11 +33,8 @@ st.set_page_config(
 )
 
 # --- Navy + Gold Theme CSS ---
-st.markdown("""
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<style>
+st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 /* ── Global overrides ──────────────────────────────────────────── */
 :root {
   --navy: #1B2A4A;
@@ -192,6 +190,13 @@ hr, [data-testid="stDivider"] {
   letter-spacing: 0.3px;
   margin-top: 2rem;
 }
+
+/* ── Progress bar shimmer ─────────────────────────────────────── */
+@keyframes prog-shimmer {
+  0% { opacity: 0.3; }
+  50% { opacity: 1; }
+  100% { opacity: 0.3; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -205,110 +210,109 @@ except ImportError:
 # --- Load data ---
 data = load_dashboard_data()
 
-# --- Build pixel hydra as SVG ---
+# --- Build pixel hydra as animated SVG (JS-driven) ---
 def _build_hydra_svg(active: bool) -> str:
-    """Generate the 32x16 pixel art hydra as an inline SVG."""
-    PX = 5  # pixel size
+    """Generate the 32x16 pixel art hydra as an inline SVG with JS animation.
+
+    When active: heads sway, eyes blink randomly, tail wags.
+    When inactive: static, dimmed.
+    """
+    PX = 8
     W, H = 32 * PX, 16 * PX
-    color_map = {
-        "bg": "none",
+    colors = {
         "navy": "#1B2A4A",
         "navy-light": "#243558",
         "navy-dark": "#111D35",
         "gold": "#C8A951",
         "gold-light": "#D4BC72",
-        "eye": "#C8A951",
     }
 
-    grid = [["bg"] * 32 for _ in range(16)]
+    def rect(r, c, fill, group="body", rid=""):
+        extra = f' id="{rid}"' if rid else ""
+        extra += f' data-g="{group}"'
+        return (
+            f'<rect{extra} x="{c*PX}" y="{r*PX}" width="{PX}" height="{PX}" '
+            f'rx="1" fill="{fill}"/>'
+        )
 
-    def s(r, c, cls):
-        if 0 <= r < 16 and 0 <= c < 32:
-            grid[r][c] = cls
+    rects = []
 
-    # Head 1 (left)
+    # Head 1 (left) — group "h1"
     for dr in range(3):
         for dc in range(3):
-            s(dr, 6+dc, "navy")
-    s(0, 7, "navy-dark")
-    s(1, 7, "eye")
+            if dr == 1 and dc == 1:
+                rects.append(rect(dr, 6+dc, colors["gold"], "h1", "eye1"))
+            elif dr == 0 and dc == 1:
+                rects.append(rect(dr, 6+dc, colors["navy-dark"], "h1"))
+            else:
+                rects.append(rect(dr, 6+dc, colors["navy"], "h1"))
 
-    # Head 2 (center)
+    # Head 2 (center) — group "h2"
     for dr in range(3):
         for dc in range(3):
-            s(dr, 14+dc, "navy")
-    s(0, 15, "navy-dark")
-    s(1, 15, "eye")
+            if dr == 1 and dc == 1:
+                rects.append(rect(dr, 14+dc, colors["gold"], "h2", "eye2"))
+            elif dr == 0 and dc == 1:
+                rects.append(rect(dr, 14+dc, colors["navy-dark"], "h2"))
+            else:
+                rects.append(rect(dr, 14+dc, colors["navy"], "h2"))
 
-    # Head 3 (right)
+    # Head 3 (right) — group "h3"
     for dr in range(3):
         for dc in range(3):
-            s(dr, 22+dc, "navy")
-    s(0, 23, "navy-dark")
-    s(1, 23, "eye")
+            if dr == 1 and dc == 1:
+                rects.append(rect(dr, 22+dc, colors["gold"], "h3", "eye3"))
+            elif dr == 0 and dc == 1:
+                rects.append(rect(dr, 22+dc, colors["navy-dark"], "h3"))
+            else:
+                rects.append(rect(dr, 22+dc, colors["navy"], "h3"))
 
-    # Necks
+    # Necks — body group
     for r in range(3, 6):
-        s(r, 7, "navy"); s(r, 8, "navy-light")
+        rects.append(rect(r, 7, colors["navy"]))
+        rects.append(rect(r, 8, colors["navy-light"]))
     for r in range(3, 6):
-        s(r, 15, "navy"); s(r, 14, "navy-light")
+        rects.append(rect(r, 15, colors["navy"]))
+        rects.append(rect(r, 14, colors["navy-light"]))
     for r in range(3, 5):
-        s(r, 23, "navy"); s(r, 22, "navy-light")
+        rects.append(rect(r, 23, colors["navy"]))
+        rects.append(rect(r, 22, colors["navy-light"]))
 
     # Body
     for r in range(5, 12):
         for c in range(6, 26):
-            s(r, c, "navy")
+            rects.append(rect(r, c, colors["navy"]))
     for c in range(10, 22):
-        s(9, c, "gold")
-        s(10, c, "gold-light")
+        rects.append(rect(9, c, colors["gold"]))
+        rects.append(rect(10, c, colors["gold-light"]))
     for c in range(8, 24):
-        s(6, c, "navy-light")
+        rects.append(rect(6, c, colors["navy-light"]))
 
     # Legs
-    s(12, 8, "navy"); s(12, 9, "navy")
-    s(13, 7, "navy-dark"); s(13, 8, "navy-dark")
-    s(12, 22, "navy"); s(12, 23, "navy")
-    s(13, 23, "navy-dark"); s(13, 24, "navy-dark")
+    for r_, c_, clr in [
+        (12,8,"navy"), (12,9,"navy"), (13,7,"navy-dark"), (13,8,"navy-dark"),
+        (12,22,"navy"), (12,23,"navy"), (13,23,"navy-dark"), (13,24,"navy-dark"),
+    ]:
+        rects.append(rect(r_, c_, colors[clr]))
 
-    # Tail
-    s(10, 5, "navy"); s(11, 4, "navy"); s(11, 5, "navy")
-    s(12, 3, "navy-light"); s(12, 4, "navy")
-    s(13, 2, "navy-light"); s(13, 3, "navy-light")
-    s(14, 1, "gold"); s(14, 2, "navy-light")
+    # Tail — group "tail"
+    tail_pixels = [
+        (10,5,"navy"), (11,4,"navy"), (11,5,"navy"),
+        (12,3,"navy-light"), (12,4,"navy"),
+        (13,2,"navy-light"), (13,3,"navy-light"),
+        (14,1,"gold"), (14,2,"navy-light"),
+    ]
+    for r_, c_, clr in tail_pixels:
+        rects.append(rect(r_, c_, colors[clr], "tail"))
 
-    # Build SVG rects
-    rects = []
-    for r in range(16):
-        for c in range(32):
-            cls = grid[r][c]
-            if cls != "bg":
-                fill = color_map[cls]
-                rects.append(
-                    f'<rect x="{c*PX}" y="{r*PX}" width="{PX}" height="{PX}" '
-                    f'rx="1" fill="{fill}"/>'
-                )
+    svg_content = "".join(rects)
+    opacity = "1" if active else "0.45"
+    anim_flag = "true" if active else "false"
 
-    anim_style = ""
-    if active:
-        anim_style = """
-        <style>
-          @keyframes hpulse { 0%,100%{opacity:0.85} 50%{opacity:1} }
-          svg { animation: hpulse 2s ease-in-out infinite; }
-        </style>
-        """
-    else:
-        anim_style = """
-        <style>
-          @keyframes hsleep { 0%,100%{opacity:0.4} 50%{opacity:0.7} }
-          svg { animation: hsleep 5s ease-in-out infinite; }
-        </style>
-        """
-
-    return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
-        f'viewBox="0 0 {W} {H}">{anim_style}{"".join(rects)}</svg>'
-    )
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}"
+      viewBox="0 0 {W} {H}" style="opacity:{opacity}" id="hydra-svg">
+      {svg_content}
+    </svg>"""
 
 
 # === HEADER ===
@@ -322,7 +326,7 @@ if data["passed_count"] > 0:
     status_text = f"System Healthy — {data['passed_count']} agents validated"
 elif n_gens > 0:
     status_dot = "#F59E0B"
-    status_text = f"Training in progress — Gen {gen_history[-1]['gen']}/{data.get('total_generations', '?')}"
+    status_text = f"Training in progress — Gen {gen_history[-1]['gen']}/{data.get('target_generations') or data.get('total_generations', '?')}"
 elif data["total_agents"] > 0:
     status_dot = "#F59E0B"
     status_text = "Training in progress"
@@ -332,35 +336,157 @@ else:
 
 hydra_svg = _build_hydra_svg(active=is_training)
 
-st.markdown(
-    f'<div style="background:linear-gradient(135deg,#0D1525 0%,#162240 100%);'
-    f'border-bottom:2px solid #C8A951;padding:18px 28px;display:flex;'
-    f'align-items:center;justify-content:space-between;margin:-1rem -1rem 1rem -1rem;">'
-    f'<div style="display:flex;align-items:center;gap:16px;">'
-    f'<span style="font-size:20px;font-weight:700;letter-spacing:3px;color:#C8A951;'
-    f'font-family:Inter,sans-serif;">HYDRACORP</span>'
-    f'{hydra_svg}'
-    f'</div>'
-    f'<div style="text-align:right;">'
-    f'<div style="font-size:12px;color:rgba(255,255,255,0.7);">'
-    f'<span style="color:{status_dot}">&#9679;</span> {status_text}</div>'
-    f'<div style="font-size:11px;color:rgba(255,255,255,0.5);">'
-    f'Last updated: <span style="color:rgba(255,255,255,0.8);font-weight:500;">'
-    f'{data["updated"]}</span></div>'
-    f'</div></div>',
-    unsafe_allow_html=True,
-)
-
-# Training progress bar
+# Progress bar (only when training)
+progress_html = ""
 if is_training and n_gens > 0:
-    total_target = data.get("total_generations", 1) or 1
+    total_target = data.get("target_generations") or data.get("total_generations", 1) or 1
     progress_pct = min(100, (gen_history[-1]["gen"] / total_target) * 100) if total_target else 0
-    st.markdown(
-        f'<div style="height:4px;background:#111D35;margin:-1rem -1rem 1rem -1rem;">'
+    progress_html = (
+        f'<div style="height:4px;background:#111D35;">'
         f'<div style="height:100%;width:{progress_pct:.1f}%;'
-        f'background:linear-gradient(90deg,#C8A951,#D4BC72);"></div></div>',
-        unsafe_allow_html=True,
+        f'background:linear-gradient(90deg,#C8A951,#D4BC72);position:relative;">'
+        f'<div class="shimmer-dot"></div>'
+        f'</div></div>'
     )
+
+# Render header + progress bar via components.html with JS-animated hydra
+_anim_active = "true" if is_training else "false"
+components.html(f"""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  @keyframes shimmer {{ 0%{{opacity:0.3}} 50%{{opacity:1}} 100%{{opacity:0.3}} }}
+  .shimmer-dot {{
+    position:absolute; right:0; top:-2px;
+    width:8px; height:8px; border-radius:50%;
+    background:#FFF;
+    box-shadow: 0 0 8px 3px rgba(255,255,255,0.6);
+    animation: shimmer 1.5s ease-in-out infinite;
+  }}
+</style>
+<div style="background:linear-gradient(135deg,#0D1525 0%,#162240 100%);
+  border-bottom:2px solid #C8A951;padding:18px 28px;display:flex;
+  align-items:center;justify-content:space-between;font-family:Inter,sans-serif;">
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span style="font-size:20px;font-weight:700;letter-spacing:3px;color:#C8A951;">HYDRACORP</span>
+    <div id="hydra-container" style="display:inline-block;">
+      {hydra_svg}
+    </div>
+  </div>
+  <div style="text-align:right;">
+    <div style="font-size:12px;color:rgba(255,255,255,0.7);">
+      <span style="color:{status_dot}">&#9679;</span> {status_text}</div>
+    <div style="font-size:11px;color:rgba(255,255,255,0.5);">
+      Last updated: <span style="color:rgba(255,255,255,0.8);font-weight:500;">
+      {data["updated"]}</span></div>
+  </div>
+</div>
+{progress_html}
+<script>
+(function() {{
+  var active = {_anim_active};
+  if (!active) return;
+
+  var PX = 8;
+  var svg = document.getElementById('hydra-svg');
+  if (!svg) return;
+
+  // Collect elements by group
+  var h1 = svg.querySelectorAll('[data-g="h1"]');
+  var h2 = svg.querySelectorAll('[data-g="h2"]');
+  var h3 = svg.querySelectorAll('[data-g="h3"]');
+  var tail = svg.querySelectorAll('[data-g="tail"]');
+  var eye1 = document.getElementById('eye1');
+  var eye2 = document.getElementById('eye2');
+  var eye3 = document.getElementById('eye3');
+  var eyes = [eye1, eye2, eye3];
+  var eyeColors = ['#C8A951', '#111D35']; // open=gold, closed=dark
+
+  // Store original positions
+  function storeOriginals(els) {{
+    els.forEach(function(el) {{
+      el._ox = parseFloat(el.getAttribute('x'));
+      el._oy = parseFloat(el.getAttribute('y'));
+    }});
+  }}
+  storeOriginals(h1); storeOriginals(h2); storeOriginals(h3); storeOriginals(tail);
+
+  // --- Head sway: each head moves up/down by 1 PX on its own rhythm ---
+  var headPhase = [0, Math.PI * 0.7, Math.PI * 1.4]; // offset each head
+  var headSpeed = [0.0015, 0.0012, 0.0018];
+
+  function animateHeads(t) {{
+    var groups = [h1, h2, h3];
+    for (var i = 0; i < 3; i++) {{
+      var dy = Math.sin(t * headSpeed[i] + headPhase[i]) * PX * 0.6;
+      var dx = Math.cos(t * headSpeed[i] * 0.5 + headPhase[i]) * PX * 0.3;
+      groups[i].forEach(function(el) {{
+        el.setAttribute('y', el._oy + dy);
+        el.setAttribute('x', el._ox + dx);
+      }});
+    }}
+  }}
+
+  // --- Tail wag: tail pixels shift left/right ---
+  var tailPhase = 0;
+  function animateTail(t) {{
+    tail.forEach(function(el, idx) {{
+      // Pixels further from body wag more
+      var amplitude = (idx + 1) / tail.length * PX * 1.0;
+      var dx = Math.sin(t * 0.003 + idx * 0.5) * amplitude;
+      var dy = Math.cos(t * 0.002 + idx * 0.3) * PX * 0.2;
+      el.setAttribute('x', el._ox + dx);
+      el.setAttribute('y', el._oy + dy);
+    }});
+  }}
+
+  // --- Eye blink: randomly close eyes for a short duration ---
+  var eyeState = [0, 0, 0]; // 0=open, >0=frames remaining closed
+  function animateEyes() {{
+    for (var i = 0; i < 3; i++) {{
+      if (eyeState[i] > 0) {{
+        eyeState[i]--;
+        if (eyeState[i] === 0) {{
+          eyes[i].setAttribute('fill', eyeColors[0]); // open
+        }}
+      }} else {{
+        // Random chance to blink (~2% per frame = ~every 1.5s at 60fps)
+        if (Math.random() < 0.02) {{
+          eyes[i].setAttribute('fill', eyeColors[1]); // closed
+          eyeState[i] = 6 + Math.floor(Math.random() * 6); // 6-12 frames
+          // 30% chance of double-blink
+          if (Math.random() < 0.3) {{
+            eyeState[i] = 4;
+            setTimeout(function(idx) {{
+              return function() {{
+                if (eyes[idx]) {{
+                  eyes[idx].setAttribute('fill', eyeColors[1]);
+                  eyeState[idx] = 5;
+                }}
+              }};
+            }}(i), 150);
+          }}
+        }}
+      }}
+    }}
+  }}
+
+  // --- Main animation loop ---
+  var lastBlink = 0;
+  function tick(t) {{
+    animateHeads(t);
+    animateTail(t);
+    // Blink at ~30fps to keep it natural
+    if (t - lastBlink > 33) {{
+      animateEyes();
+      lastBlink = t;
+    }}
+    requestAnimationFrame(tick);
+  }}
+  requestAnimationFrame(tick);
+}})();
+</script>
+""", height=170 if not progress_html else 178)
 
 # --- Plotly Navy+Gold theme helper ---
 PLOTLY_LAYOUT = dict(
@@ -382,51 +508,167 @@ def apply_navy_theme(fig):
     fig.update_yaxes(gridcolor="#1E2A42", zerolinecolor="#1E2A42")
     return fig
 
-# === HERO KPI CARDS ===
-c1, c2, c3, c4, c5 = st.columns(5)
+# === ROW 1: CURRENT GENERATION KPIs ===
+cg = data.get("current_gen", {})
+total_target = data.get("target_generations") or data.get("total_generations", 0)
+_has_pnl = data.get("has_real_pnl", False)
 
-# Compute improvement delta from gen history
-gen_improve = ""
-if len(gen_history) >= 2:
-    first_best = gen_history[0]["best_eval"]
-    last_best = gen_history[-1]["best_eval"]
-    gen_improve = f"{last_best - first_best:+.0f} since Gen 1"
+if cg:
+    st.markdown('<div class="section-header">CURRENT GENERATION</div>', unsafe_allow_html=True)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
 
-with c1:
-    st.metric(
-        "Portfolio Value",
-        f"${data['portfolio_value']:,.2f}",
-        delta=f"${data['dollar_pnl']:+,.2f}",
-    )
-with c2:
-    st.metric(
-        "Best Agent Return",
-        f"{data['total_return_pct']:+.2f}%",
-        delta=f"${data['dollar_pnl']:+,.2f} CAD",
-        help="Return of the single best agent from the latest evaluation. Not cumulative across generations.",
-    )
-with c3:
-    pool_delta = f"Pool: {gen_history[-1]['pool_size']}" if gen_history else ""
-    st.metric(
-        "Best Agent",
-        data["best_agent"],
-        delta=pool_delta,
-    )
-with c4:
-    st.metric(
-        "vs S&P 500",
-        data["excess_label"],
-        delta=f"{data['excess_return_pct']:+.2f}%",
-    )
-with c5:
-    score = data["safety_score"]
-    label, color = safety_label(score)
-    st.metric(
-        "Safety Score",
-        f"{score}/100",
-        delta=label,
-        delta_color="normal" if score >= 60 else "inverse",
-    )
+    cg_ret = cg.get("best_return_pct", 0)
+    cg_dollar = round(STARTING_CAPITAL_CAD * cg_ret / 100.0, 2)
+    cg_agent = friendly_name(cg.get("best_agent", ""))
+    cg_gen = cg.get("gen_num", 0)
+    cg_verdict = cg.get("verdict", "")
+    cg_severity = cg.get("severity", "")
+    cg_has_pnl = cg.get("has_real_pnl", False)
+    cg_eval = cg.get("best_eval", 0)
+
+    with c1:
+        if cg_has_pnl:
+            cg_pv = round(compute_portfolio_value(cg_ret / 100.0), 2)
+            st.metric(
+                "Portfolio Value",
+                f"${cg_pv:,.2f}",
+                delta=f"${cg_dollar:+,.2f}",
+            )
+        else:
+            st.metric(
+                "Best Score",
+                f"{cg_eval:.0f}",
+                delta="Reward (not $)",
+            )
+    with c2:
+        if cg_has_pnl:
+            lookback = data.get("lookback_days", 60)
+            daily_pnl = cg_dollar / max(lookback, 1)
+            st.metric(
+                "P&L",
+                f"${cg_dollar:+,.2f}",
+                delta=f"${daily_pnl:+,.2f}/day | ${daily_pnl*21:+,.2f}/mo",
+            )
+        else:
+            st.metric(
+                "P&L",
+                "Awaiting data",
+                delta="P&L tracking starts next run",
+            )
+    with c3:
+        st.metric(
+            "Best Agent",
+            cg_agent or "N/A",
+            delta=f"Gen {cg_gen}/{total_target}" if total_target else f"Gen {cg_gen}",
+        )
+    with c4:
+        st.metric(
+            "vs S&P 500",
+            data["excess_label"],
+            delta=f"{data['excess_return_pct']:+.2f}%",
+        )
+    with c5:
+        cg_positive = sum(
+            1 for g in gen_history[-1:] for v in g.get("agent_eval_scores", {}).values() if v > 0
+        ) if gen_history else 0
+        cg_total_agents = len(gen_history[-1].get("agent_eval_scores", {})) if gen_history else 0
+        cg_wr = (cg_positive / cg_total_agents * 100) if cg_total_agents else 0
+        st.metric(
+            "Win Rate",
+            f"{cg_wr:.0f}%",
+            delta=f"{cg_positive}/{cg_total_agents} agents profitable",
+        )
+    with c6:
+        verdict_color = {"CONTINUE": "normal", "RETUNE": "off", "HALT": "inverse"}
+        st.metric(
+            "Verdict",
+            cg_verdict or "N/A",
+            delta=cg_severity.title() if cg_severity else "",
+            delta_color=verdict_color.get(cg_verdict, "off"),
+        )
+
+# === ROW 2: ALL-TIME BEST KPIs ===
+atb = data.get("all_time_best", {})
+if atb:
+    st.markdown('<div class="section-header">ALL-TIME BEST</div>', unsafe_allow_html=True)
+    a1, a2, a3, a4, a5, a6 = st.columns(6)
+
+    atb_ret = atb.get("best_return_pct")  # None when no real P&L
+    atb_agent = atb.get("best_agent", "")
+    atb_gen = atb.get("best_gen", 0)
+    atb_profitable = atb.get("profitable_gens", 0)
+    atb_total = atb.get("total_gens", 0)
+    atb_has_pnl = atb.get("has_real_pnl", False)
+    atb_eval = atb.get("best_eval", 0)
+    atb_eval_agent = atb.get("best_eval_agent", "")
+    atb_eval_gen = atb.get("best_eval_gen", 0)
+
+    with a1:
+        if atb_has_pnl and atb_ret is not None:
+            pv = round(compute_portfolio_value(atb_ret / 100.0), 2)
+            dollar_pnl = round(compute_dollar_pnl(atb_ret / 100.0), 2)
+            st.metric(
+                "Portfolio Value",
+                f"${pv:,.2f}",
+                delta=f"${dollar_pnl:+,.2f}",
+            )
+        else:
+            st.metric(
+                "Peak Score",
+                f"{atb_eval:.0f}",
+                delta=f"Gen {atb_eval_gen} — {atb_eval_agent}",
+            )
+    with a2:
+        if atb_has_pnl and atb_ret is not None:
+            dollar_pnl = round(compute_dollar_pnl(atb_ret / 100.0), 2)
+            lookback = data.get("lookback_days", 60)
+            daily = dollar_pnl / max(lookback, 1)
+            st.metric(
+                "Peak P&L",
+                f"${dollar_pnl:+,.2f}",
+                delta=f"${daily:+,.2f}/day | ${daily*21:+,.2f}/mo | ${daily*252:+,.2f}/yr",
+            )
+        else:
+            st.metric(
+                "Peak P&L",
+                "Awaiting data",
+                delta="P&L tracking starts next run",
+            )
+    with a3:
+        if atb_has_pnl:
+            st.metric(
+                "Best Agent",
+                atb_agent or "N/A",
+                delta=f"Gen {atb_gen}/{total_target}" if total_target else f"Gen {atb_gen}",
+            )
+        else:
+            st.metric(
+                "Best Agent",
+                atb_eval_agent or atb_agent or "N/A",
+                delta=f"Gen {atb_eval_gen}/{total_target}" if total_target else f"Gen {atb_eval_gen}",
+            )
+    with a4:
+        st.metric(
+            "vs S&P 500",
+            data["excess_label"],
+            delta=f"{data['excess_return_pct']:+.2f}%",
+        )
+    with a5:
+        win_pct = (atb_profitable / atb_total * 100) if atb_total else 0
+        st.metric(
+            "Win Rate",
+            f"{win_pct:.0f}%",
+            delta=f"{atb_profitable}/{atb_total} gens profitable",
+        )
+    with a6:
+        score = data["safety_score"]
+        label, _ = safety_label(score)
+        st.metric(
+            "Safety Score",
+            f"{score}/100",
+            delta=label,
+            delta_color="normal" if score >= 60 else "inverse",
+        )
 
 st.divider()
 
@@ -562,13 +804,17 @@ if gen_history and len(gen_history) >= 2:
         st.metric("Current Pool", f"{pool_sizes[-1]} agents",
                    delta=f"+{pool_sizes[-1] - pool_sizes[0]} since start")
     with s3:
-        above_zero = sum(1 for b in best_evals if b > 0)
+        # Use P&L returns when available, otherwise fall back to best_eval > 0
+        above_zero = sum(
+            1 for g in gen_history
+            if (g.get("best_return_pct") or g.get("best_eval") or 0) > 0
+        )
         st.metric("Profitable Gens", f"{above_zero}/{len(gens)}",
                    delta=f"{above_zero/len(gens)*100:.0f}% of generations")
     with s4:
         current_phase = "warmup" if gens[-1] <= 2 else "exploration" if gens[-1] <= 10 else "exploitation"
         st.metric("Training Phase", current_phase.title(),
-                   delta=f"Gen {gens[-1]}/{data.get('total_generations', '?')}")
+                   delta=f"Gen {gens[-1]}/{data.get('target_generations') or data.get('total_generations', '?')}")
 
     # --- P&L and Deployment Monitor ---
     latest_gen = gen_history[-1]
@@ -636,6 +882,172 @@ elif gen_history and len(gen_history) == 1:
     st.info(f"Generation 1 complete (best eval: {gen_history[0]['best_eval']:.0f}). Chart appears after Gen 2.")
 else:
     st.info("No generation data yet. The chart will appear as training progresses.")
+
+# === GEOPOLITICS INTEL TICKER ===
+_geo = data.get("geopolitics", {})
+if _geo.get("current_regime"):
+    st.markdown('<div class="section-header">GEOPOLITICS INTEL</div>', unsafe_allow_html=True)
+
+    regime = _geo["current_regime"]
+    confidence = _geo.get("confidence", 0)
+    vol_outlook = _geo.get("volatility_outlook", "")
+    summary = _geo.get("summary", "")
+    updated = _geo.get("updated", "")[:16].replace("T", " ")
+
+    regime_colors = {
+        "risk_on": ("#22C55E", "RISK ON"),
+        "risk_off": ("#F59E0B", "RISK OFF"),
+        "crisis": ("#EF4444", "CRISIS"),
+        "antifragile": ("#A78BFA", "ANTIFRAGILE"),
+    }
+    badge_color, badge_label = regime_colors.get(regime, ("#7B8BA5", regime.upper()))
+
+    vol_colors = {
+        "low": "#22C55E", "stable": "#3B82F6",
+        "elevated": "#F59E0B", "extreme": "#EF4444",
+    }
+    vol_color = vol_colors.get(vol_outlook, "#7B8BA5")
+
+    g1, g2, g3, g4 = st.columns(4)
+    with g1:
+        st.markdown(
+            f'<div style="background:{badge_color};color:#000;padding:8px 16px;'
+            f'border-radius:6px;text-align:center;font-weight:700;font-size:16px;'
+            f'letter-spacing:2px;">{badge_label}</div>',
+            unsafe_allow_html=True,
+        )
+    with g2:
+        st.metric("Confidence", f"{confidence:.0%}")
+    with g3:
+        st.markdown(
+            f'<span style="color:{vol_color};font-weight:600;">'
+            f'Volatility: {vol_outlook.upper()}</span>',
+            unsafe_allow_html=True,
+        )
+    with g4:
+        st.caption(f"Updated: {updated}")
+
+    if summary:
+        st.markdown(f"> {summary}")
+
+    # Ticker recommendations
+    ticker_recs = _geo.get("ticker_recs", {})
+    overweight = ticker_recs.get("sectors_to_overweight", [])
+    underweight = ticker_recs.get("sectors_to_underweight", [])
+    reasoning = ticker_recs.get("reasoning", "")
+    if overweight or underweight or reasoning:
+        rec_parts = []
+        if overweight:
+            rec_parts.append(f":chart_with_upwards_trend: Overweight: {', '.join(overweight)}")
+        if underweight:
+            rec_parts.append(f":chart_with_downwards_trend: Underweight: {', '.join(underweight)}")
+        if reasoning:
+            rec_parts.append(f"_{reasoning}_")
+        st.markdown(" | ".join(rec_parts))
+
+    # Scrolling regime history ticker
+    geo_history = _geo.get("history", [])
+    if geo_history:
+        ticker_items = []
+        for h in reversed(geo_history[-20:]):
+            ts = h.get("timestamp", "")[:16].replace("T", " ")
+            r = h.get("regime", "")
+            c = h.get("confidence", 0)
+            n = h.get("headlines", 0)
+            r_color, r_label = regime_colors.get(r, ("#7B8BA5", r.upper()))
+            ticker_items.append(
+                f'<span style="color:{r_color};font-weight:600;">{r_label}</span>'
+                f' ({c:.0%} conf, {n} headlines) '
+                f'<span style="color:#7B8BA5;font-size:11px;">{ts}</span>'
+            )
+
+        separator = '&nbsp;&nbsp;&nbsp;<span style="color:#1E2A42;">|</span>&nbsp;&nbsp;&nbsp;'
+        ticker_content = separator.join(ticker_items)
+
+        components.html(f"""
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
+          * {{ margin:0; padding:0; box-sizing:border-box; }}
+          .ticker-wrap {{
+            width: 100%;
+            overflow: hidden;
+            background: #0D1525;
+            border: 1px solid #1E2A42;
+            border-radius: 6px;
+            padding: 8px 0;
+          }}
+          .ticker-content {{
+            display: inline-block;
+            white-space: nowrap;
+            animation: scroll-left 45s linear infinite;
+            font-family: Inter, sans-serif;
+            font-size: 13px;
+            color: #E8ECF2;
+          }}
+          .ticker-content:hover {{
+            animation-play-state: paused;
+          }}
+          @keyframes scroll-left {{
+            0% {{ transform: translateX(100%); }}
+            100% {{ transform: translateX(-100%); }}
+          }}
+        </style>
+        <div class="ticker-wrap">
+          <div class="ticker-content">
+            {ticker_content}
+          </div>
+        </div>
+        """, height=45)
+
+    st.divider()
+
+# === GENERATION SCORECARD ===
+scorecard = data.get("scorecard", {})
+if scorecard and scorecard.get("dimension_scores"):
+    st.markdown('<div class="section-header">GENERATION SCORECARD</div>', unsafe_allow_html=True)
+
+    sc_cols = st.columns([1, 3])
+    with sc_cols[0]:
+        overall = scorecard.get("overall", 0)
+        verdict = scorecard.get("verdict", "")
+        verdict_colors = {"CONTINUE": COLORS["green"], "RETUNE": COLORS["amber"], "HALT": COLORS["red"]}
+        v_color = verdict_colors.get(verdict, COLORS["text_muted"])
+        st.markdown(
+            f'<div style="text-align:center;padding:16px;">'
+            f'<div style="font-size:48px;font-weight:700;color:{COLORS["gold"]}">{overall}/10</div>'
+            f'<div style="font-size:14px;font-weight:600;color:{v_color};'
+            f'letter-spacing:2px;margin-top:8px;">{verdict}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    with sc_cols[1]:
+        dim_labels = {
+            "reward_trend": "Reward Trend",
+            "top_agent_quality": "Top Agent Quality",
+            "pool_diversity": "Pool Diversity",
+            "positive_rate": "Positive Rate",
+            "conviction_strength": "Conviction Strength",
+            "stability": "Stability",
+        }
+        dims = scorecard.get("dimension_scores", {})
+        for dim_key, dim_val in dims.items():
+            label = dim_labels.get(dim_key, dim_key)
+            progress_val = dim_val / 5.0
+            st.markdown(f"**{label}** — {dim_val}/5")
+            st.progress(progress_val)
+
+    # Critical gaps
+    gaps = scorecard.get("critical_gaps", [])
+    if gaps:
+        with st.expander(f"Gaps & Issues ({len(gaps)})"):
+            for gap in gaps:
+                priority = gap.get("priority", "")
+                p_color = {"HIGH": COLORS["red"], "MEDIUM": COLORS["amber"], "LOW": COLORS["text_muted"]}.get(priority, COLORS["text_muted"])
+                st.markdown(
+                    f"<span style='color:{p_color};font-weight:600'>[{priority}]</span> {gap['title']}",
+                    unsafe_allow_html=True,
+                )
 
 st.divider()
 
@@ -893,7 +1305,33 @@ with col_right:
     st.markdown(f"**Profit Ratio:** {pf:.2f}x ({pf_label})")
     st.caption("For every $1 lost, you earn ${:.2f}".format(pf))
 
-st.divider()
+# === CONVICTION CALIBRATION ===
+_conviction = data.get("conviction", {})
+
+if _conviction:
+    st.markdown('<div class="section-header">CONVICTION CALIBRATION (ELEOS)</div>', unsafe_allow_html=True)
+    for agent_name, conv_data in sorted(
+        _conviction.items(),
+        key=lambda x: x[1].get("overall_win_rate", 0) if isinstance(x[1], dict) else 0,
+        reverse=True,
+    ):
+        if not isinstance(conv_data, dict):
+            continue
+        total_trades = conv_data.get("total_trades", 0)
+        total_wins = conv_data.get("total_wins", 0)
+        win_rate = conv_data.get("overall_win_rate", 0)
+        conv_scale = conv_data.get("conviction_scale", 1.0)
+        trusted = conv_data.get("trusted", False)
+
+        trust_dot = ":green_circle:" if trusted else ":red_circle:"
+        trust_label = "Trusted" if trusted else "Untrusted"
+
+        st.markdown(
+            f"{trust_dot} **{friendly_name(agent_name)}** — "
+            f"Win Rate: {win_rate:.0%} ({total_wins}/{total_trades} trades) "
+            f"| Conviction: {conv_scale:.2f}x "
+            f"| *{trust_label}*"
+        )
 
 # === ALERTS ===
 st.subheader("Recent Events")

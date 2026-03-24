@@ -211,8 +211,30 @@ class PopulationTrainer:
             # 4. Update rankings
             self.pool.update_rankings(eval_scores)
 
+            # 4b. Pre-deployment gate: block agents that never trade
+            blocked_agents = set()
+            for name, pnl_data in agent_pnl.items():
+                cash_ratio = pnl_data.get("mean_cash_ratio", 1.0)
+                if cash_ratio >= 0.99:  # Never deployed capital
+                    blocked_agents.add(name)
+                    logger.warning(
+                        f"  BLOCKED from promotion: {name} "
+                        f"(cash_ratio={cash_ratio:.2%}, never deployed)"
+                    )
+
+            # Temporarily set blocked agents to -inf ranking so they can't promote
+            saved_rankings = {}
+            for name in blocked_agents:
+                if name in self.pool._rankings:
+                    saved_rankings[name] = self.pool._rankings[name]
+                    self.pool._rankings[name] = float("-inf")
+
             # 5. Promote top learning agents
             promoted = self.pool.promote_top(self.top_k_promote)
+
+            # Restore rankings (blocked agents still train, just can't promote)
+            for name, score in saved_rankings.items():
+                self.pool._rankings[name] = score
 
             # 6. Demote bottom static agents (keep pool size manageable)
             demoted = self.pool.demote_bottom(self.bottom_k_demote)

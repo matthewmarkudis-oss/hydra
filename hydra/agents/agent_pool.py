@@ -296,6 +296,7 @@ class AgentPool:
         from hydra.agents.td3_agent import TD3Agent
         from hydra.agents.recurrent_ppo_agent import RecurrentPPOAgent
         from hydra.agents.rule_based_agent import RuleBasedAgent
+        from hydra.agents.cmaes_agent import CMAESAgent
 
         type_map = {
             "PPOAgent": PPOAgent,
@@ -303,6 +304,7 @@ class AgentPool:
             "A2CAgent": A2CAgent,
             "TD3Agent": TD3Agent,
             "RecurrentPPOAgent": RecurrentPPOAgent,
+            "CMAESAgent": CMAESAgent,
             "StaticAgent": StaticAgent,
             "RuleBasedAgent": RuleBasedAgent,
         }

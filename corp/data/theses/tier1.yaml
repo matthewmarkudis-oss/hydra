@@ -1,0 +1,224 @@
+# Tier 1 Thesis Library — 12 high-signal macro thinkers
+# Format: Each thesis has an id, thinker, claim, category, time_horizon,
+# sector_implications, confidence, agreement/disagreement, keywords, and sources.
+
+- id: dalio_debt_cycles
+  thinker: Ray Dalio
+  claim: >
+    We are in the late stages of a long-term debt cycle. Reserve currency
+    transitions follow predictable patterns of fiscal excess, money printing,
+    and loss of purchasing power. This leads to defensive positioning.
+  category: monetary
+  time_horizon: 3-5 years
+  sector_implications:
+    overweight: [XLU, GLD, TLT]
+    underweight: [XLF, XLY]
+  confidence: high
+  agreement_with: [Hunt, Hudson]
+  disagrees_with: [Druckenmiller]
+  keywords: [debt, deficit, money printing, reserve currency, inflation, central bank, QE, fiscal]
+  sources:
+    - "Principles for Dealing with the Changing World Order (2021)"
+
+- id: zeihan_supply_chain
+  thinker: Peter Zeihan
+  claim: >
+    Global supply chains are fragmenting permanently. US reshoring accelerates.
+    Countries without demographic dividends lose manufacturing base. Energy
+    independence is the key strategic advantage.
+  category: structural
+  time_horizon: 3-5 years
+  sector_implications:
+    overweight: [XLI, XLE]
+    underweight: [EEM]
+  confidence: high
+  agreement_with: [Friedman, Brands]
+  disagrees_with: [Varoufakis]
+  keywords: [reshoring, supply chain, demographics, onshoring, manufacturing, nearshoring, aging population]
+  sources:
+    - "The End of the World Is Just the Beginning (2022)"
+    - "Disunited Nations (2020)"
+
+- id: pettis_china_rebalancing
+  thinker: Michael Pettis
+  claim: >
+    China's investment-driven growth model is structurally broken. The
+    rebalancing toward consumption will be painful and slow, with global
+    implications for commodity demand and growth expectations.
+  category: structural
+  time_horizon: 3-5 years
+  sector_implications:
+    overweight: [XLP]
+    underweight: [EEM, FXI]
+  confidence: high
+  agreement_with: [Zeihan]
+  disagrees_with: []
+  keywords: [china, rebalancing, property, evergrande, deflation, consumption, investment, overcapacity]
+  sources:
+    - "Trade Wars Are Class Wars (2020)"
+
+- id: taleb_fragility
+  thinker: Nassim Taleb
+  claim: >
+    Systems that suppress volatility become fragile. Fat tails dominate
+    financial returns. Barbell strategy: very safe + very speculative,
+    nothing in the middle. Already integrated via antifragile regime.
+  category: risk
+  time_horizon: 1-5 years
+  sector_implications:
+    overweight: [XLU, GLD]
+    underweight: []
+  confidence: high
+  agreement_with: [Sornette, Mandelbrot]
+  disagrees_with: []
+  keywords: [black swan, tail risk, fragility, antifragile, volatility, barbell, fat tail]
+  sources:
+    - "Antifragile (2012)"
+    - "The Black Swan (2007)"
+
+- id: pozsar_bretton_woods_iii
+  thinker: Zoltan Pozsar
+  claim: >
+    The commodity-backed monetary order is replacing Bretton Woods II.
+    Dollar hegemony is eroding as commodity producers demand non-dollar
+    settlement. Gold and commodities gain structural monetary premium.
+  category: monetary
+  time_horizon: 3-5 years
+  sector_implications:
+    overweight: [GLD, DBC, XLE]
+    underweight: [UUP]
+  confidence: medium
+  agreement_with: [Dalio, Hudson]
+  disagrees_with: []
+  keywords: [dollar, dedollarization, BRICS, gold, commodity, settlement, petrodollar, reserve currency]
+  sources:
+    - "War and Commodity Encumbrance series (2022)"
+
+- id: marks_market_cycles
+  thinker: Howard Marks
+  claim: >
+    Markets move in predictable cycles of greed and fear. The key is
+    knowing where we stand in the cycle. Late-cycle euphoria means
+    reduce risk. Early-cycle pessimism means add risk.
+  category: timing
+  time_horizon: 1-3 years
+  sector_implications:
+    overweight: []
+    underweight: []
+  confidence: high
+  agreement_with: [Dalio, Druckenmiller]
+  disagrees_with: []
+  keywords: [cycle, euphoria, fear, greed, valuation, bubble, overvalued, undervalued, complacency]
+  sources:
+    - "Mastering the Market Cycle (2018)"
+
+- id: yergin_energy_geopolitics
+  thinker: Daniel Yergin
+  claim: >
+    Energy remains the master geopolitical commodity. Oil supply disruptions,
+    OPEC decisions, and pipeline politics drive macro outcomes. The energy
+    transition is real but slower than consensus expects.
+  category: energy
+  time_horizon: 1-5 years
+  sector_implications:
+    overweight: [XLE, XOP]
+    underweight: []
+  confidence: high
+  agreement_with: [Smil, Alhajji]
+  disagrees_with: []
+  keywords: [oil, OPEC, energy, pipeline, natural gas, LNG, crude, barrel, production cut, shale]
+  sources:
+    - "The New Map (2020)"
+    - "The Prize (1991)"
+
+- id: colby_taiwan_risk
+  thinker: Elbridge Colby
+  claim: >
+    Taiwan strait conflict is the highest-probability great power war
+    scenario. A blockade or invasion would devastate global semiconductor
+    supply and trigger a financial crisis in tech-dependent economies.
+  category: security
+  time_horizon: 1-5 years
+  sector_implications:
+    overweight: [XLI, ITA]
+    underweight: [SMH, XLK]
+  confidence: medium
+  agreement_with: [Brands]
+  disagrees_with: []
+  keywords: [taiwan, semiconductor, TSMC, china military, strait, blockade, chip, invasion]
+  sources:
+    - "The Strategy of Denial (2021)"
+
+- id: turchin_instability_cycles
+  thinker: Peter Turchin
+  claim: >
+    Political instability follows predictable cycles driven by elite
+    overproduction, declining real wages, and state fiscal crisis. The US
+    is in a period of elevated instability through the late 2020s.
+  category: structural
+  time_horizon: 3-5 years
+  sector_implications:
+    overweight: [XLU, XLP]
+    underweight: [XLY]
+  confidence: medium
+  agreement_with: [Dalio]
+  disagrees_with: []
+  keywords: [populism, tariff, redistribution, inequality, protest, instability, polarization, unrest]
+  sources:
+    - "End Times (2023)"
+    - "Ages of Discord (2016)"
+
+- id: sornette_bubble_detection
+  thinker: Didier Sornette
+  claim: >
+    Financial bubbles exhibit quantifiable signatures (log-periodic power
+    laws) before they burst. Dragon Kings — extreme outlier events — are
+    predictable, unlike Black Swans.
+  category: timing
+  time_horizon: weeks-months
+  sector_implications:
+    overweight: []
+    underweight: []
+  confidence: medium
+  agreement_with: [Taleb, Mandelbrot]
+  disagrees_with: []
+  keywords: [bubble, crash, overheated, speculative, mania, euphoria, parabolic, dragon king]
+  sources:
+    - "Why Stock Markets Crash (2003)"
+
+- id: sahm_recession_timing
+  thinker: Claudia Sahm
+  claim: >
+    The Sahm Rule — a 0.5% rise in the 3-month moving average of the
+    unemployment rate from its 12-month low — has accurately signaled
+    every US recession since 1970. Binary and actionable.
+  category: timing
+  time_horizon: weeks-months
+  sector_implications:
+    overweight: [XLU, TLT, XLP]
+    underweight: [XLY, XLF]
+  confidence: high
+  agreement_with: [Hunt]
+  disagrees_with: []
+  keywords: [unemployment, recession, jobs, layoffs, claims, payroll, Sahm rule, labor]
+  sources:
+    - "Direct Relief Through Automatic Stabilizers (2019)"
+
+- id: tooze_crisis_patterns
+  thinker: Adam Tooze
+  claim: >
+    Financial crises follow identifiable patterns of contagion through
+    dollar funding markets, interbank lending freezes, and swap line
+    activation. Historical pattern recognition is the best early warning.
+  category: monetary
+  time_horizon: 1-3 years
+  sector_implications:
+    overweight: [XLU, GLD]
+    underweight: [XLF]
+  confidence: high
+  agreement_with: [Dalio, Mehrling]
+  disagrees_with: []
+  keywords: [contagion, bank run, liquidity, swap line, funding, interbank, credit freeze, bailout]
+  sources:
+    - "Crashed (2018)"
+    - "Shutdown (2021)"

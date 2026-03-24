@@ -115,8 +115,9 @@ class StaticAgent(BaseRLAgent):
         (``'>=' not supported between 'torch.device' and 'int'``).
         """
         path = Path(path)
-        if not path.exists():
-            logger.warning(f"Checkpoint not found: {path}")
+        # SB3 saves as {path}.zip — check both variants
+        if not path.exists() and not path.with_suffix(".zip").exists():
+            logger.warning(f"Checkpoint not found: {path} (also tried .zip)")
             return
 
         try:
@@ -136,6 +137,9 @@ class StaticAgent(BaseRLAgent):
         elif self._source_type == "a2c":
             from stable_baselines3 import A2C
             return A2C.load(str(path), device=device)
+        elif self._source_type == "td3":
+            from stable_baselines3 import TD3
+            return TD3.load(str(path), device=device)
         elif self._source_type == "recurrentppo":
             from sb3_contrib import RecurrentPPO
             return RecurrentPPO.load(str(path), device=device)

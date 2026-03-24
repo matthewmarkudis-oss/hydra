@@ -181,7 +181,7 @@ class TestSessionManager:
 class TestStateBuilder:
     def test_obs_dim(self):
         sb = StateBuilder(num_stocks=5)
-        assert sb.obs_dim == 17 * 5 + 11  # 96 (16 per-stock indicators + 4 global + 6 signal features)
+        assert sb.obs_dim == 17 * 5 + 14  # 99 (16 per-stock indicators + 4 global + 6 signal + 3 macro)
 
     def test_build(self, synthetic_features):
         sb = StateBuilder(num_stocks=1, episode_bars=78)

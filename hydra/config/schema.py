@@ -53,6 +53,7 @@ class RewardConfig(BaseModel):
     cash_drag_penalty: float = Field(default=0.3, ge=0, description="Penalty for undeployed capital")
     benchmark_bonus_weight: float = Field(default=2.0, ge=0, description="Weight for benchmark outperformance")
     min_deployment_pct: float = Field(default=0.3, ge=0, le=1.0, description="Minimum invested fraction")
+    alpha_target_weight: float = Field(default=3.0, ge=0, description="Weight for cumulative alpha vs benchmark")
 
 
 class AgentConfig(BaseModel):
@@ -83,7 +84,7 @@ class PoolConfig(BaseModel):
         AgentConfig(agent_type="rule_based", rule_agent_class="alpha_momentum.AlphaMomentum"),
         AgentConfig(agent_type="rule_based", rule_agent_class="beta_mean_reversion.BetaMeanReversion"),
     ])
-    action_aggregation: str = Field(default="weighted_mean", description="weighted_mean | majority_vote")
+    action_aggregation: str = Field(default="conviction_weighted", description="weighted_mean | conviction_weighted | top_k")
     equal_weights: bool = Field(default=True)
 
 
@@ -146,7 +147,7 @@ class ForwardTestConfig(BaseModel):
     duration_days: int = Field(default=60, ge=1, le=90)
     max_agents: int = Field(default=3, ge=1, le=10)
     initial_capital: float = Field(default=10000.0, gt=0)
-    max_position_pct: float = Field(default=0.20, gt=0, le=0.50)
+    max_position_pct: float = Field(default=0.35, gt=0, le=0.50)
     sharpe_retention_min: float = Field(default=0.50, ge=0, le=1.0)
     drawdown_tolerance: float = Field(default=1.5, ge=1.0)
     win_rate_tolerance: float = Field(default=0.80, ge=0, le=1.0)

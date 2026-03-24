@@ -30,10 +30,10 @@ class ForwardTestConfig(BaseModel):
         description="Sandbox starting capital (USD).",
     )
     max_position_pct: float = Field(
-        default=0.20,
+        default=0.35,
         gt=0,
         le=0.50,
-        description="Conservative position limit for forward testing.",
+        description="Position limit for forward testing (matches training regime).",
     )
     sharpe_retention_min: float = Field(
         default=0.50,

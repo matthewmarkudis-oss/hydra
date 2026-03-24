@@ -20,7 +20,7 @@ class TestLiveStateBuilder:
 
         tickers = ["AAPL", "NVDA", "TSLA"]
         builder = LiveStateBuilder(3, tickers)
-        assert builder.obs_dim == 17 * 3 + 5
+        assert builder.obs_dim == 17 * 3 + 14
 
     def test_not_ready_without_warmup(self):
         from hydra.forward_test.live_state_builder import LiveStateBuilder
@@ -70,7 +70,7 @@ class TestLiveStateBuilder:
             peak_value=10600.0,
         )
 
-        assert obs.shape == (17 * n + 5,)
+        assert obs.shape == (17 * n + 14,)
         assert obs.dtype == np.float32
 
     def test_build_populates_indicators(self):
@@ -134,7 +134,7 @@ class TestLiveStateBuilder:
             portfolio_value=10000.0,
             peak_value=10000.0,
         )
-        assert obs.shape == (17 * 1 + 5,)
+        assert obs.shape == (17 * 1 + 14,)
 
     def test_ignores_unknown_ticker(self):
         from hydra.forward_test.live_state_builder import LiveStateBuilder

@@ -63,16 +63,16 @@ class CompetitionRebalancer:
 
     def __init__(
         self,
-        min_weight: float = 0.03,
-        max_weight: float = 0.55,
-        adjustment_step: float = 0.05,
+        min_weight: float = 0.01,
+        max_weight: float = 0.60,
+        adjustment_step: float = 0.10,
         sharpe_threshold: float = 1.0,
         min_win_rate: float = 0.52,
         max_drawdown_threshold: float = 0.18,
         min_profit_factor: float = 1.50,
         required_consecutive: int = 3,
-        ema_alpha: float = 0.5,
-        max_weight_change: float = 0.20,
+        ema_alpha: float = 0.70,
+        max_weight_change: float = 0.30,
     ):
         self.min_weight = min_weight
         self.max_weight = max_weight

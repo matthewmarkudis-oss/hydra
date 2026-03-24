@@ -32,6 +32,7 @@ class DifferentialSharpeReward:
         cash_drag_penalty: float = 0.3,
         benchmark_bonus_weight: float = 2.0,
         min_deployment_pct: float = 0.3,
+        alpha_target_weight: float = 3.0,
     ):
         self.eta = np.float32(eta)
         self.drawdown_penalty = np.float32(drawdown_penalty)
@@ -42,6 +43,7 @@ class DifferentialSharpeReward:
         self.cash_drag_penalty = np.float32(cash_drag_penalty)
         self.benchmark_bonus_weight = np.float32(benchmark_bonus_weight)
         self.min_deployment_pct = np.float32(min_deployment_pct)
+        self.alpha_target_weight = np.float32(alpha_target_weight)
 
         # Regime multipliers (default: neutral)
         self._regime = "risk_on"
@@ -56,6 +58,10 @@ class DifferentialSharpeReward:
         self._prev_portfolio_value = np.float32(0.0)
         self._peak_value = np.float32(0.0)
 
+        # Cumulative alpha tracking (benchmark-relative)
+        self._cumulative_return = np.float32(0.0)
+        self._cumulative_bench_return = np.float32(0.0)
+
     def reset(self, initial_value: float) -> None:
         """Reset reward state at episode start."""
         self._ema_return = np.float32(0.0)
@@ -63,6 +69,8 @@ class DifferentialSharpeReward:
         self._prev_portfolio_value = np.float32(initial_value)
         self._peak_value = np.float32(initial_value)
         self._step_idx = 0
+        self._cumulative_return = np.float32(0.0)
+        self._cumulative_bench_return = np.float32(0.0)
 
     def set_benchmark(self, benchmark_returns: np.ndarray | None) -> None:
         """Set per-bar benchmark returns for the current episode.
@@ -178,16 +186,26 @@ class DifferentialSharpeReward:
             shortfall = float(self.min_deployment_pct) - deployed_pct
             deployment_penalty = -eff_cash_drag_penalty * shortfall * 2.0
 
-        # Benchmark bonus — reward outperforming the benchmark
+        # Benchmark bonus — reward outperforming the benchmark per step
         benchmark_bonus = 0.0
+        bench_return = 0.0
         if self._benchmark_returns is not None and self._step_idx - 1 < len(self._benchmark_returns):
             bench_return = float(self._benchmark_returns[self._step_idx - 1])
             excess_return = float(step_return) - bench_return
             benchmark_bonus = eff_benchmark_bonus_weight * excess_return
 
+        # Cumulative alpha target — reward for beating the benchmark overall,
+        # not just per-step. This creates a persistent signal that the agent
+        # should be accumulating excess return vs the benchmark.
+        self._cumulative_return += float(step_return)
+        self._cumulative_bench_return += bench_return
+        cumulative_alpha = float(self._cumulative_return - self._cumulative_bench_return)
+        alpha_bonus = float(self.alpha_target_weight) * cumulative_alpha
+
         total_reward = (
             sharpe_reward + pnl_bonus + dd_penalty + tc_penalty
-            + hold_penalty + cash_drag + deployment_penalty + benchmark_bonus
+            + hold_penalty + cash_drag + deployment_penalty
+            + benchmark_bonus + alpha_bonus
         )
         total_reward *= eff_reward_scale
 
@@ -202,6 +220,8 @@ class DifferentialSharpeReward:
             "cash_drag": cash_drag,
             "deployment_penalty": deployment_penalty,
             "benchmark_bonus": benchmark_bonus,
+            "alpha_bonus": alpha_bonus,
+            "cumulative_alpha": cumulative_alpha,
             "step_return": float(step_return),
             "drawdown": drawdown,
             "cash_ratio": cash_ratio,
@@ -223,6 +243,7 @@ class DifferentialSharpeReward:
             "cash_drag_penalty": float(self.cash_drag_penalty),
             "benchmark_bonus_weight": float(self.benchmark_bonus_weight),
             "min_deployment_pct": float(self.min_deployment_pct),
+            "alpha_target_weight": float(self.alpha_target_weight),
         }
 
     def update_params(self, params: dict[str, float]) -> None:
@@ -232,7 +253,8 @@ class DifferentialSharpeReward:
         """
         for key in ("drawdown_penalty", "transaction_penalty", "holding_penalty",
                      "pnl_bonus_weight", "reward_scale",
-                     "cash_drag_penalty", "benchmark_bonus_weight", "min_deployment_pct"):
+                     "cash_drag_penalty", "benchmark_bonus_weight",
+                     "min_deployment_pct", "alpha_target_weight"):
             if key in params:
                 setattr(self, key, np.float32(params[key]))
 

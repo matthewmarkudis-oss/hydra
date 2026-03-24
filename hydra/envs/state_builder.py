@@ -16,6 +16,10 @@ import numpy as np
 #  ZETA quality, ZETA veto)
 NUM_SIGNAL_FEATURES = 6
 
+# Cross-stock macro aggregate features computed from existing data.
+# (cross_stock_dispersion, market_breadth, avg_vol_regime)
+NUM_MACRO_FEATURES = 3
+
 
 class StateBuilder:
     """Constructs the observation vector for the RL agent.
@@ -53,8 +57,12 @@ class StateBuilder:
         [17N+8]        delta_vix_dampened  (DELTA VIX-adjusted sentiment, [-1, 1])
         [17N+9]        zeta_quality_score  (ZETA fundamental quality, [-1, 1])
         [17N+10]       zeta_veto_active    (ZETA veto flag, 0 or 1)
+        --- Cross-stock macro aggregate features ---
+        [17N+11]       cross_stock_dispersion  (std of per-stock returns, [0, 1])
+        [17N+12]       market_breadth          (frac stocks above trend, [0, 1])
+        [17N+13]       avg_vol_regime          (mean vol regime, [0, 1])
 
-    Total dims = 1 + 17*N + 4 + 6 = 17*N + 11
+    Total dims = 1 + 17*N + 4 + 6 + 3 = 17*N + 14
     """
 
     def __init__(
@@ -68,7 +76,7 @@ class StateBuilder:
         self.episode_bars = episode_bars
         self.normalize = normalize
         self._signal_provider = signal_provider
-        self.obs_dim = 17 * num_stocks + 5 + NUM_SIGNAL_FEATURES
+        self.obs_dim = 17 * num_stocks + 5 + NUM_SIGNAL_FEATURES + NUM_MACRO_FEATURES
 
         # Pre-computed episode data (set at episode start)
         self._close_matrix: np.ndarray | None = None  # (bars, stocks)
@@ -218,6 +226,18 @@ class StateBuilder:
         template[:, 15*n:16*n] = np.clip(self._sentiment_momentum_matrix, -1.0, 1.0)
         self._obs_template = template
 
+        # Pre-compute macro aggregate features (bars,)
+        price_returns = self._close_matrix / safe_start[np.newaxis, :] - 1.0
+        self._macro_dispersion = np.clip(
+            np.std(price_returns, axis=1), 0.0, 1.0,
+        ).astype(np.float32)
+        self._macro_breadth = (
+            np.mean(self._trend_matrix > 0, axis=1)
+        ).astype(np.float32)
+        self._macro_avg_vol = np.clip(
+            np.mean(self._vol_regime_matrix, axis=1) / 3.0, 0.0, 1.0,
+        ).astype(np.float32)
+
     def build(
         self,
         step: int,
@@ -272,6 +292,12 @@ class StateBuilder:
                 obs[sig_idx:sig_idx + NUM_SIGNAL_FEATURES] = 0.0
         else:
             obs[sig_idx:sig_idx + NUM_SIGNAL_FEATURES] = 0.0
+
+        # Macro aggregate features (cross-stock regime indicators)
+        macro_idx = sig_idx + NUM_SIGNAL_FEATURES
+        obs[macro_idx] = self._macro_dispersion[step]
+        obs[macro_idx + 1] = self._macro_breadth[step]
+        obs[macro_idx + 2] = self._macro_avg_vol[step]
 
         return obs
 

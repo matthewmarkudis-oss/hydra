@@ -1,8 +1,10 @@
 """Live observation vector builder for forward testing.
 
-Mirrors the training StateBuilder's 17N+5 observation layout using a
-rolling window of live OHLCV bars. Reuses hydra.data.indicators for
-all technical indicator computation.
+Mirrors the training StateBuilder's observation layout using a rolling
+window of live OHLCV bars. Reuses hydra.data.indicators for all
+technical indicator computation.
+
+obs_dim = 17*N + 14 (matches training StateBuilder exactly).
 
 This ensures agents receive the same observation distribution during
 forward testing as they did during training.
@@ -17,6 +19,7 @@ from typing import Any
 import numpy as np
 
 from hydra.data.indicators import compute_all_indicators
+from hydra.envs.state_builder import NUM_SIGNAL_FEATURES, NUM_MACRO_FEATURES
 
 logger = logging.getLogger("hydra.forward_test.live_state_builder")
 
@@ -25,7 +28,7 @@ _MIN_WARMUP_BARS = 55  # SMA50 + a few extra
 
 
 class LiveStateBuilder:
-    """Builds full 17N+5 observation vectors from live bar data.
+    """Builds full 17N+14 observation vectors from live bar data.
 
     Maintains a rolling window of OHLCV bars per ticker and computes
     all 16 indicator groups on each build() call. This is slower than
@@ -39,6 +42,8 @@ class LiveStateBuilder:
         [2N+1:3N+1]      RSI / 100
         ...              (see StateBuilder docstring for full layout)
         [17N+1:17N+5]    global features (drawdown, pnl, session, progress)
+        [17N+5:17N+11]   signal features (zeros in live mode)
+        [17N+11:17N+14]  macro aggregate features
     """
 
     def __init__(self, num_stocks: int, tickers: list[str], buffer_size: int = 60):
@@ -51,7 +56,7 @@ class LiveStateBuilder:
                 indicator warmup periods (max is SMA50 = 50 bars).
         """
         self.num_stocks = num_stocks
-        self.obs_dim = 17 * num_stocks + 5
+        self.obs_dim = 17 * num_stocks + 5 + NUM_SIGNAL_FEATURES + NUM_MACRO_FEATURES
         self._tickers = tickers
         self._buffer_size = buffer_size
         self._bar_count = 0
@@ -112,7 +117,7 @@ class LiveStateBuilder:
         portfolio_value: float,
         peak_value: float,
     ) -> np.ndarray:
-        """Build the full 17N+5 observation vector.
+        """Build the full 17N+14 observation vector.
 
         Uses the rolling bar buffers to compute all indicators, then
         applies the same normalization as StateBuilder.
@@ -207,6 +212,37 @@ class LiveStateBuilder:
         obs[idx + 1] = np.float32((portfolio_value - initial_cash) / max(initial_cash, 1e-8))
         obs[idx + 2] = np.float32(0.5)  # Session label — not applicable live, use neutral
         obs[idx + 3] = np.float32(0.5)  # Time progress — not applicable live, use midpoint
+
+        # Signal features (zeros in live mode — signal providers not available)
+        sig_idx = idx + 4
+        obs[sig_idx:sig_idx + NUM_SIGNAL_FEATURES] = 0.0
+
+        # Macro aggregate features (computed from current per-ticker data)
+        macro_idx = sig_idx + NUM_SIGNAL_FEATURES
+        if n > 0:
+            returns = []
+            trend_positive = 0
+            trend_total = 0
+            vol_regimes = []
+            for ticker in self._tickers:
+                # Cross-stock return dispersion
+                start_p = self._start_prices.get(ticker, 1.0)
+                buf = self._buffers.get(ticker)
+                if buf and len(buf) > 0:
+                    returns.append(buf[-1]["close"] / max(start_p, 1e-8) - 1.0)
+                # Market breadth + vol regime (reuse single indicator call)
+                ind = self._compute_ticker_indicators(ticker)
+                if ind is not None:
+                    trend_total += 1
+                    if ind["trend_direction"] > 0:
+                        trend_positive += 1
+                    vol_regimes.append(ind["vol_regime"])
+            if len(returns) >= 2:
+                obs[macro_idx] = np.clip(np.std(returns), 0.0, 1.0)
+            if trend_total > 0:
+                obs[macro_idx + 1] = trend_positive / trend_total
+            if vol_regimes:
+                obs[macro_idx + 2] = np.clip(np.mean(vol_regimes) / 3.0, 0.0, 1.0)
 
         return obs
 

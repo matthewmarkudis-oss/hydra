@@ -92,7 +92,7 @@ pool:
     frozen: false
     checkpoint_path: null
     rule_agent_class: beta_mean_reversion.BetaMeanReversion
-  action_aggregation: weighted_mean
+  action_aggregation: conviction_weighted
   equal_weights: true
 training:
   total_timesteps: 500000

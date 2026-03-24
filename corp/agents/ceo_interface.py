@@ -142,7 +142,7 @@ class CEOInterface(BaseCorpAgent):
         # --- Ticker change warning ---
         if parsed["intent"] == "ticker_change":
             warnings.append(
-                "Adding/removing a ticker changes observation dimensions (17N+5). "
+                "Adding/removing a ticker changes observation dimensions (17N+14). "
                 "All RL agents must be retrained. Rule-based agents adapt automatically."
             )
 

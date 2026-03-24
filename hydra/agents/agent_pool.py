@@ -103,10 +103,16 @@ class AgentPool:
         self,
         observation: np.ndarray,
         deterministic: bool = False,
+        mode: str = "conviction_weighted",
     ) -> np.ndarray:
-        """Get weighted aggregate action from all agents.
+        """Get aggregate action from all agents.
 
-        Returns a single action array (weighted mean of all agent actions).
+        Modes:
+            weighted_mean: Standard weighted average (dilutes conviction).
+            conviction_weighted: Squares weights to amplify top agents.
+            top_k: Only uses the top 3 agents by weight (ignores the rest).
+
+        Returns a single action array.
         """
         actions = self.collect_actions(observation, deterministic)
         if not actions:
@@ -116,7 +122,23 @@ class AgentPool:
         weights = self.get_weights()
         action_matrix = np.stack([actions[n] for n in names])
 
-        # Weighted mean
+        if mode == "conviction_weighted":
+            # Square weights to amplify high-conviction agents
+            concentrated = weights ** 2
+            total = np.sum(concentrated)
+            if total > 0:
+                weights = concentrated / total
+
+        elif mode == "top_k":
+            # Only use top 3 agents by weight
+            k = min(3, len(weights))
+            top_indices = np.argsort(weights)[-k:]
+            mask = np.zeros_like(weights)
+            mask[top_indices] = weights[top_indices]
+            total = np.sum(mask)
+            if total > 0:
+                weights = mask / total
+
         aggregated = np.average(action_matrix, axis=0, weights=weights)
         return np.clip(aggregated, -1.0, 1.0).astype(np.float32)
 
@@ -190,7 +212,7 @@ class AgentPool:
                 "num_tickers": first_agent.action_dim,
                 "obs_dim": first_agent.obs_dim,
                 "action_dim": first_agent.action_dim,
-                "obs_layout": "17N+5",
+                "obs_layout": "17N+14",
             }
 
         metadata = {

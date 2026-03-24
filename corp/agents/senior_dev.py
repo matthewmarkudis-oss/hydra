@@ -228,7 +228,7 @@ class SeniorDev(BaseCorpAgent):
         """Review a ticker change proposal for potential issues.
 
         Validates:
-        1. Observation space compatibility (17*N + 5)
+        1. Observation space compatibility (17*N + 14)
         2. Churn rate warnings
         3. Sector concentration limits
         4. Duplicate tickers
@@ -242,12 +242,12 @@ class SeniorDev(BaseCorpAgent):
             issues.append("Ticker proposal contains no tickers.")
             return issues
 
-        # 1. Observation space check (17 features per stock + 5 global)
+        # 1. Observation space check (17 features per stock + 14 global/signal/macro)
         n = len(proposed_tickers)
-        obs_dim = 17 * n + 5
-        if obs_dim > 17 * 500 + 5:
+        obs_dim = 17 * n + 14
+        if obs_dim > 17 * 500 + 14:
             issues.append(
-                f"Obs space {obs_dim} exceeds maximum (17*500+5=8505). "
+                f"Obs space {obs_dim} exceeds maximum (17*500+14=8514). "
                 f"Reduce to <= 500 tickers."
             )
 

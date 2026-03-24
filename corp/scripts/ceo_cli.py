@@ -534,7 +534,7 @@ def _tool_propose_config_change(input_: dict) -> str:
     # Check if ticker change
     if "data" in patch and "tickers" in patch.get("data", {}):
         lines.append(
-            "\nWARNING: Ticker changes alter observation dimensions (17N+5). "
+            "\nWARNING: Ticker changes alter observation dimensions (17N+14). "
             "All RL agents must be retrained."
         )
 

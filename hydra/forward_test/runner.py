@@ -491,11 +491,11 @@ class ForwardTestRunner:
         """Build a simplified observation vector (fallback).
 
         Used when LiveStateBuilder is unavailable or warming up.
-        Produces correct shape (17*N+5) but only populates price and
+        Produces correct shape (17*N+14) but only populates price and
         weight features — indicators are zeros.
         """
         n = len(self._tickers)
-        obs = np.zeros(17 * n + 5, dtype=np.float32)
+        obs = np.zeros(17 * n + 14, dtype=np.float32)
 
         for i, ticker in enumerate(self._tickers):
             price = prices.get(ticker, 0)

@@ -19,7 +19,7 @@ reward:
   holding_penalty: 0.0
 
 pool:
-  action_aggregation: weighted_mean
+  action_aggregation: conviction_weighted
   equal_weights: true
   agents:
     - agent_type: ppo

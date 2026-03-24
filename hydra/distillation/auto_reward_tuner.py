@@ -25,6 +25,7 @@ _DEFAULTS = {
     "cash_drag_penalty": 0.3,
     "benchmark_bonus_weight": 2.0,
     "min_deployment_pct": 0.3,
+    "alpha_target_weight": 3.0,
 }
 
 # Schema bounds (min, max) for each tunable parameter
@@ -37,6 +38,7 @@ _BOUNDS = {
     "cash_drag_penalty": (0.05, 2.0),   # Was 1.0 — allow stronger deployment pressure
     "benchmark_bonus_weight": (0.5, 15.0),  # Was 10.0 — allow stronger benchmark targeting
     "min_deployment_pct": (0.05, 0.7),  # Was 0.1 floor — allow lighter deployment in crisis
+    "alpha_target_weight": (0.5, 10.0),  # Cumulative alpha vs benchmark
 }
 
 # Mutation type → (parameter_name, direction)
@@ -48,7 +50,7 @@ _MUTATION_MAP: dict[str, list[tuple[str, int]]] = {
     "loosen_risk": [("drawdown_penalty", -1), ("transaction_penalty", -1)],
     "prioritize_consistency": [("holding_penalty", +1), ("transaction_penalty", +1)],
     "increase_deployment": [("cash_drag_penalty", +1), ("min_deployment_pct", +1)],
-    "reward_outperformance": [("benchmark_bonus_weight", +1), ("pnl_bonus_weight", +1)],
+    "reward_outperformance": [("benchmark_bonus_weight", +1), ("pnl_bonus_weight", +1), ("alpha_target_weight", +1)],
 }
 
 

@@ -32,9 +32,9 @@ from hydra.training.trainer import Trainer
 logger = logging.getLogger("hydra.training.population")
 
 # Timesteps of SB3 gradient training per learning agent per generation.
-# Must be >= PPO n_steps * 2 (4096 ≥ 2048 * 2) to ensure at least two
-# full rollout buffer fills and meaningful gradient updates per generation.
-_DEFAULT_TRAIN_TIMESTEPS = 4096
+# 16384 = 8x PPO n_steps (2048), giving 8 full rollout buffer fills
+# per generation — enough for meaningful gradient updates each gen.
+_DEFAULT_TRAIN_TIMESTEPS = 16384
 
 
 class PopulationTrainer:

@@ -60,8 +60,8 @@ class AgentConfig(BaseModel):
 
     agent_type: str = Field(description="One of: ppo, sac, a2c, static, rule_based")
     learning_rate: float = Field(default=3e-4, gt=0)
-    batch_size: int = Field(default=64, ge=1)
-    gamma: float = Field(default=0.99, ge=0, le=1)
+    batch_size: int = Field(default=512, ge=1)
+    gamma: float = Field(default=0.995, ge=0, le=1)
     n_steps: int = Field(default=2048, ge=1, description="Rollout steps before update (PPO/A2C)")
     ent_coef: float = Field(default=0.01, ge=0, description="Entropy coefficient")
     clip_range: float = Field(default=0.2, gt=0, le=1, description="PPO clip range")

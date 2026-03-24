@@ -9,6 +9,7 @@ Integrates:
 - PROMETHEUS competition-based weight rebalancing
 - ELEOS Bayesian conviction calibration
 - CHIMERA multi-objective fitness decomposition
+- Training Auditor (per-generation health checks)
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from hydra.evaluation.competition import AgentCompetitionScore, CompetitionRebal
 from hydra.evaluation.conviction import ConvictionCalibrator
 from hydra.evolution.diagnostics import DiagnosticEngine, GenerationMetrics
 from hydra.agents.td3_agent import TD3Agent
+from hydra.training.auditor import TrainingAuditor
 from hydra.training.curriculum import Curriculum
 from hydra.training.metrics_tracker import MetricsTracker
 from hydra.training.trainer import Trainer
@@ -48,9 +50,10 @@ class PopulationTrainer:
     5. PROMETHEUS competition: rebalance agent weights by rank
     6. ELEOS conviction: calibrate weights by Bayesian win/loss tracking
     7. Rank by evaluation performance
-    8. Promote top-K learning agents → static snapshots
+    8. Promote top-K learning agents -> static snapshots
     9. Demote bottom-K static agents (remove from pool)
     10. Apply curriculum adjustments
+    11. Training Auditor: per-generation health check (watches the watchers)
     """
 
     def __init__(
@@ -106,6 +109,9 @@ class PopulationTrainer:
 
         # Auto reward tuner (CHIMERA-driven)
         self._auto_reward_tuner = auto_reward_tuner
+
+        # Training Auditor — watches the watchers
+        self._auditor = TrainingAuditor()
 
     def train(self) -> dict[str, Any]:
         """Run full population-based training with CHIMERA/PROMETHEUS/ELEOS integration."""
@@ -318,6 +324,28 @@ class PopulationTrainer:
                 f"(Sharpe={best_agent_score:.3f}), promoted={promoted}, "
                 f"demoted={demoted}, pool_size={self.pool.size}"
             )
+
+            # --- Training Auditor: per-generation health check ---
+            try:
+                reward_params = None
+                if hasattr(self.env, "reward_fn"):
+                    reward_params = self.env.reward_fn.get_params()
+                audit_result = self._auditor.audit_generation(
+                    generation=self._generation,
+                    gen_result=gen_result,
+                    reward_params=reward_params,
+                    regime=adjustments.get("regime"),
+                    truncation_rate=train_result.get("truncation_rate", 0.0),
+                )
+                gen_result["audit"] = {
+                    "verdict": audit_result.verdict,
+                    "alerts": [
+                        {"check": a.check_name, "severity": a.severity, "message": a.message}
+                        for a in audit_result.alerts
+                    ],
+                }
+            except Exception as e:
+                logger.warning(f"Training auditor failed: {e}")
 
             # Fire generation callback (used for live dashboard updates)
             if self.on_generation:

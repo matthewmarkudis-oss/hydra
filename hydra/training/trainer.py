@@ -98,6 +98,10 @@ class Trainer:
         ep_cash_ratios = [s["mean_cash_ratio"] for s in episode_summaries if "mean_cash_ratio" in s]
         mean_cash_ratio = float(np.mean(ep_cash_ratios)) if ep_cash_ratios else 1.0
 
+        # Truncation rate: fraction of episodes cut short by constraints
+        truncated_count = sum(1 for s in episode_summaries if s.get("truncated_by_constraint"))
+        truncation_rate = truncated_count / max(num_episodes, 1)
+
         return {
             "episodes": num_episodes,
             "mean_reward": float(np.mean(episode_rewards)),
@@ -105,6 +109,7 @@ class Trainer:
             "total_steps": self._global_step,
             "total_trades": total_trades,
             "mean_cash_ratio": mean_cash_ratio,
+            "truncation_rate": truncation_rate,
         }
 
     def _train_one_episode(self, deterministic: bool = False) -> tuple[float, dict]:
@@ -146,6 +151,7 @@ class Trainer:
         summary = step_info.get("episode_summary", {})
         summary["num_trades"] = step_info.get("num_trades", 0)
         summary["total_transaction_costs"] = step_info.get("total_transaction_costs", 0.0)
+        summary["truncated_by_constraint"] = bool(step_info.get("halt_reason"))
         if cash_ratios:
             summary["mean_cash_ratio"] = float(np.mean(cash_ratios))
         return total_reward, summary

@@ -72,31 +72,32 @@ class CMAESAgent(BaseRLAgent):
         W, b = self._decode_weights(flat_weights)
 
         # Handle both VecEnv and regular Env
-        if hasattr(env, "num_envs"):
-            # VecEnv — reset returns (obs_array, info_dict) tuple
+        is_vec = hasattr(env, "num_envs")
+        if is_vec:
+            n_envs = env.num_envs
+            # VecEnv — reset returns (obs_array, info_dict) tuple or just obs
             reset_result = env.reset()
             if isinstance(reset_result, tuple):
                 obs = reset_result[0]  # Extract observations, not info
             else:
                 obs = reset_result
             if obs.ndim > 1:
-                obs = obs[0]  # First sub-env
+                obs = obs[0]  # Use first sub-env only
         else:
             obs, _ = env.reset()
 
         total_reward = 0.0
-        done = False
         max_steps = 2000  # Safety limit
 
         for _ in range(max_steps):
             raw = obs.astype(np.float32) @ W + b
             action = np.clip(np.tanh(raw), -1.0, 1.0).astype(np.float32)
 
-            if hasattr(env, "num_envs"):
-                obs_all, rewards, dones, infos = env.step(
-                    action.reshape(1, -1)
-                )
-                obs = obs_all[0]
+            if is_vec:
+                # VecEnv expects (n_envs, action_dim) — tile same action
+                vec_action = np.tile(action.reshape(1, -1), (n_envs, 1))
+                obs_all, rewards, dones, infos = env.step(vec_action)
+                obs = obs_all[0]  # Track first sub-env
                 total_reward += float(rewards[0])
                 if dones[0]:
                     break

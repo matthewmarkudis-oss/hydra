@@ -679,10 +679,10 @@ class PopulationTrainer:
 
         Returns one of: risk_on, risk_off, crisis, antifragile, or None.
         """
-        if not self._diagnostics or len(self._diagnostics._history) < 3:
+        if not self._diagnostics or len(self._diagnostics.history) < 3:
             return None  # Need at least 3 gens of data
 
-        recent = self._diagnostics._history[-5:]  # Last 5 gens
+        recent = self._diagnostics.history[-5:]  # Last 5 gens
         returns = [g.mean_return for g in recent]
         cash_ratios = [g.mean_cash_ratio for g in recent]
         rewards = [g.mean_reward for g in recent]
@@ -791,8 +791,8 @@ class PopulationTrainer:
         # Fallback: self-calibration from agent performance history
         # If best agents are sitting in cash, boost deployment pressure.
         # If best agents are losing money, boost drawdown protection.
-        if self._diagnostics and self._diagnostics._history:
-            recent = self._diagnostics._history[-3:]  # Last 3 gens
+        if self._diagnostics and self._diagnostics.history:
+            recent = self._diagnostics.history[-3:]  # Last 3 gens
             avg_cash = float(np.mean([g.mean_cash_ratio for g in recent]))
             avg_return = float(np.mean([g.mean_return for g in recent]))
 

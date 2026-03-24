@@ -195,6 +195,19 @@ class PopulationTrainer:
                 except Exception as e:
                     logger.warning(f"Auto reward tuning failed: {e}")
 
+            # --- Distillation: Periodic factor-based reward calibration ---
+            # Every 10 generations, run the RewardCalibrator to align reward
+            # weights with market factor structure. This closes the IRL loop.
+            if (
+                self._generation > 0
+                and self._generation % 10 == 0
+                and hasattr(self.env, "reward_fn")
+            ):
+                try:
+                    self._run_distillation_calibration()
+                except Exception as e:
+                    logger.warning(f"Distillation calibration failed: {e}")
+
             # --- ELEOS: Bayesian conviction calibration (runs BEFORE PROMETHEUS) ---
             # Trust gating: new/unproven agents start at 50% allocation.
             # Running before PROMETHEUS ensures conviction-adjusted weights are
@@ -251,6 +264,16 @@ class PopulationTrainer:
 
             # 7. Apply curriculum
             adjustments = self.curriculum.on_generation(self._generation, eval_scores)
+
+            # 7b. Data-driven regime classification from agent performance
+            # Override the stale curriculum default with actual market conditions
+            # derived from how agents are performing (proxy for market regime).
+            data_regime = self._classify_regime_from_data(
+                eval_scores, train_result
+            )
+            if data_regime:
+                adjustments["regime"] = data_regime
+                self.curriculum.set_regime(data_regime)
 
             # Apply regime-conditional rewards if regime changed
             regime = adjustments.get("regime")
@@ -639,6 +662,179 @@ class PopulationTrainer:
                     )
         except Exception as e:
             logger.warning(f"Conviction calibration failed: {e}")
+
+    # -------------------------------------------------------------------
+    # Data-driven regime classification
+    # -------------------------------------------------------------------
+
+    def _classify_regime_from_data(
+        self, eval_scores: dict[str, float], train_result: dict
+    ) -> str | None:
+        """Classify market regime from agent performance and price data.
+
+        Uses three signals:
+        1. Agent performance trend (are agents making or losing money?)
+        2. Volatility of returns (clustered losses = high vol regime)
+        3. Return dispersion (wide spread = opportunity, narrow = mean-reversion)
+
+        Returns one of: risk_on, risk_off, crisis, antifragile, or None.
+        """
+        if not self._diagnostics or len(self._diagnostics._history) < 3:
+            return None  # Need at least 3 gens of data
+
+        recent = self._diagnostics._history[-5:]  # Last 5 gens
+        returns = [g.mean_return for g in recent]
+        cash_ratios = [g.mean_cash_ratio for g in recent]
+        rewards = [g.mean_reward for g in recent]
+
+        avg_return = float(np.mean(returns))
+        return_vol = float(np.std(returns)) if len(returns) > 1 else 0.0
+        avg_cash = float(np.mean(cash_ratios))
+        reward_trend = rewards[-1] - rewards[0] if len(rewards) >= 2 else 0.0
+
+        # Score dispersion: how different are agents performing?
+        if eval_scores and len(eval_scores) >= 2:
+            scores = list(eval_scores.values())
+            score_spread = max(scores) - min(scores)
+        else:
+            score_spread = 0.0
+
+        # Classification logic
+        # Crisis: agents losing badly, high vol, negative trend
+        if avg_return < -1.0 and return_vol > 1.0:
+            logger.info(
+                f"  REGIME: CRISIS (avg_ret={avg_return:.1f}%, vol={return_vol:.1f})"
+            )
+            return "crisis"
+
+        # Risk-off: mild losses or flat, moderate vol
+        if avg_return < 0 and reward_trend < 0:
+            logger.info(
+                f"  REGIME: RISK_OFF (avg_ret={avg_return:.1f}%, trend={reward_trend:.0f})"
+            )
+            return "risk_off"
+
+        # Antifragile: high volatility but positive returns = asymmetric opportunity
+        if return_vol > 0.8 and avg_return > 0 and score_spread > 50:
+            logger.info(
+                f"  REGIME: ANTIFRAGILE (vol={return_vol:.1f}, ret={avg_return:.1f}%, spread={score_spread:.0f})"
+            )
+            return "antifragile"
+
+        # Risk-on: positive returns, stable
+        if avg_return > 0 and reward_trend >= 0:
+            logger.info(
+                f"  REGIME: RISK_ON (avg_ret={avg_return:.1f}%, trend={reward_trend:.0f})"
+            )
+            return "risk_on"
+
+        # Default: let corp regime (from geopolitics) take precedence
+        return None
+
+    # -------------------------------------------------------------------
+    # Distillation: Factor-based reward calibration (Inverse RL / Factor Mapping)
+    # -------------------------------------------------------------------
+
+    def _run_distillation_calibration(self) -> None:
+        """Run periodic reward weight calibration via factor mapping.
+
+        Uses the RewardCalibrator to align reward function weights with
+        market factor structure (Fama-French 5-factor model). This bridges
+        the gap between the RL reward signal and actual market dynamics.
+
+        Falls back to a heuristic self-calibration if factor data is not
+        available: analyze agent performance history and push reward weights
+        toward what the best agents are optimizing for.
+        """
+        current_params = self.env.reward_fn.get_params()
+
+        # Try factor-based calibration first
+        try:
+            from hydra.distillation.reward_calibrator import RewardCalibrator
+            from hydra.distillation.factor_data import FactorDataStore
+
+            store = FactorDataStore()
+            ff5 = store.load_ff5()
+
+            if ff5 is not None and len(ff5) > 0:
+                calibrator = RewardCalibrator()
+                loadings = calibrator.compute_target_profile(ff5)
+                new_weights = calibrator.map_to_reward_config(loadings, current_params)
+
+                if new_weights and new_weights != current_params:
+                    # Blend: 40% new calibration + 60% current (gradual shift)
+                    blended = {}
+                    for key in current_params:
+                        old_val = current_params[key]
+                        new_val = new_weights.get(key, old_val)
+                        blended[key] = round(0.6 * old_val + 0.4 * new_val, 6)
+
+                    self.env.reward_fn.update_params(blended)
+                    # Update per-agent envs
+                    for agent_env in self._agent_envs.values():
+                        for i in range(getattr(agent_env, "num_envs", 0)):
+                            sub_env = agent_env.envs[i]
+                            if hasattr(sub_env, "reward_fn"):
+                                sub_env.reward_fn.update_params(blended)
+
+                    logger.info(
+                        f"  DISTILLATION: Factor-calibrated reward weights at gen {self._generation}"
+                    )
+                    # Flush off-policy replay buffers
+                    for agent in self.pool.get_all():
+                        if isinstance(agent, TD3Agent) and agent._model is not None:
+                            agent._model.replay_buffer.reset()
+                    return
+        except Exception as e:
+            logger.debug(f"Factor calibration unavailable: {e}")
+
+        # Fallback: self-calibration from agent performance history
+        # If best agents are sitting in cash, boost deployment pressure.
+        # If best agents are losing money, boost drawdown protection.
+        if self._diagnostics and self._diagnostics._history:
+            recent = self._diagnostics._history[-3:]  # Last 3 gens
+            avg_cash = float(np.mean([g.mean_cash_ratio for g in recent]))
+            avg_return = float(np.mean([g.mean_return for g in recent]))
+
+            adjustments = dict(current_params)
+            changed = False
+
+            if avg_cash > 0.6:
+                # Agents hoarding cash — boost deployment pressure
+                adjustments["cash_drag_penalty"] = min(
+                    current_params["cash_drag_penalty"] * 1.3, 2.0
+                )
+                adjustments["pnl_bonus_weight"] = min(
+                    current_params["pnl_bonus_weight"] * 1.2, 30.0
+                )
+                changed = True
+                logger.info(f"  DISTILLATION self-cal: boosting deployment (avg cash={avg_cash:.0%})")
+
+            if avg_return < -0.5:
+                # Agents losing money — boost drawdown protection temporarily
+                adjustments["drawdown_penalty"] = min(
+                    current_params["drawdown_penalty"] * 1.2, 5.0
+                )
+                changed = True
+                logger.info(f"  DISTILLATION self-cal: tightening risk (avg return={avg_return:.1f}%)")
+            elif avg_return > 1.0:
+                # Agents making money — loosen up, reward aggression
+                adjustments["pnl_bonus_weight"] = min(
+                    current_params["pnl_bonus_weight"] * 1.15, 30.0
+                )
+                adjustments["drawdown_penalty"] = max(
+                    current_params["drawdown_penalty"] * 0.85, 0.05
+                )
+                changed = True
+                logger.info(f"  DISTILLATION self-cal: rewarding aggression (avg return={avg_return:.1f}%)")
+
+            if changed:
+                self.env.reward_fn.update_params(adjustments)
+                for agent_env in self._agent_envs.values():
+                    for i in range(getattr(agent_env, "num_envs", 0)):
+                        sub_env = agent_env.envs[i]
+                        if hasattr(sub_env, "reward_fn"):
+                            sub_env.reward_fn.update_params(adjustments)
 
     @property
     def generation(self) -> int:

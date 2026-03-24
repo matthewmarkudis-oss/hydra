@@ -59,7 +59,7 @@ class RecurrentPPOAgent(BaseRLAgent):
         self.max_grad_norm = max_grad_norm
         self.lstm_hidden_size = lstm_hidden_size
         self.n_lstm_layers = n_lstm_layers
-        self.net_arch = net_arch or [256]
+        self.net_arch = net_arch or [512, 256]
 
         self._device = _get_device(prefer_gpu)
         self._model = None

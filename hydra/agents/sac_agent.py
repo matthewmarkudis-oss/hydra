@@ -44,7 +44,7 @@ class SACAgent(BaseRLAgent):
         self.tau = tau
         self.ent_coef = ent_coef
         self.learning_starts = learning_starts
-        self.net_arch = net_arch or [256, 256]
+        self.net_arch = net_arch or [512, 512, 256]
 
         self._device = _get_device(prefer_gpu)
         self._model = None

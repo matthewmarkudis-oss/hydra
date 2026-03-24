@@ -118,7 +118,7 @@ class PPOAgent(BaseRLAgent):
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
         self.max_grad_norm = max_grad_norm
-        self.net_arch = net_arch or [256, 256]
+        self.net_arch = net_arch or [512, 512, 256]
 
         self._device = _get_device(prefer_gpu)
         self._model = None

@@ -282,6 +282,9 @@ def load_dashboard_data() -> dict[str, Any]:
 
         # Geopolitics ticker
         "geopolitics": _load_geopolitics_ticker(corp),
+
+        # Thesis library intel
+        "thesis_intel": _load_thesis_intel(corp),
     }
 
 
@@ -816,6 +819,86 @@ def _load_geopolitics_ticker(corp: dict | None) -> dict[str, Any]:
     return result
 
 
+def _load_thesis_intel(corp: dict | None) -> dict[str, Any]:
+    """Load thesis library cross-reference data for dashboard display.
+
+    Reads the thesis library and cross-references against the latest
+    geopolitics headlines from corp state to produce active confirmations,
+    agreement matrix, and sector signals.
+    """
+    result: dict[str, Any] = {
+        "active": False,
+        "total_theses": 0,
+        "confirmations": [],
+        "agreement_matrix": {},
+        "sector_signals": {},
+        "confidence_adjustment": 0.0,
+        "thinkers": [],
+        "categories": {},
+    }
+
+    try:
+        from corp.data.thesis_library import ThesisLibrary
+        lib = ThesisLibrary()
+    except Exception:
+        return result
+
+    if lib.count == 0:
+        return result
+
+    summary = lib.get_summary()
+    result["total_theses"] = summary.get("total_theses", 0)
+    result["thinkers"] = summary.get("thinkers", [])
+    result["categories"] = summary.get("categories", {})
+    result["active"] = True
+
+    # Cross-reference against headlines from the latest geopolitics regime
+    headlines = []
+    if corp:
+        regime = corp.get("regime", {})
+        # The geopolitics_expert stores its summary as a pseudo-headline
+        regime_summary = regime.get("summary", "")
+        if regime_summary:
+            headlines.append({"title": regime_summary})
+
+        # Also pull any headline data from decisions log
+        log_path = Path("logs/corporation_decisions.jsonl")
+        if not log_path.exists():
+            log_path = Path(__file__).parent.parent.parent / "logs" / "corporation_decisions.jsonl"
+        if log_path.exists():
+            try:
+                with open(log_path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if entry.get("agent") == "geopolitics_expert":
+                            detail = entry.get("detail", {})
+                            # Use regime description as headline proxy
+                            regime_text = detail.get("regime", "")
+                            if regime_text:
+                                headlines.append({"title": regime_text})
+                            # Use any stored summary
+                            summ = detail.get("summary", "")
+                            if summ:
+                                headlines.append({"title": summ})
+            except OSError:
+                pass
+
+    if headlines:
+        xref = lib.cross_reference(headlines)
+        result["confirmations"] = xref.get("confirmations", [])
+        result["agreement_matrix"] = xref.get("agreement_matrix", {})
+        result["sector_signals"] = xref.get("sector_signals", {})
+        result["confidence_adjustment"] = xref.get("confidence_adjustment", 0.0)
+
+    return result
+
+
 def _load_forward_test_data() -> dict[str, Any]:
     """Load forward test log and state for dashboard display."""
     result = {
@@ -992,5 +1075,10 @@ def _empty_data() -> dict[str, Any]:
         "geopolitics": {
             "current_regime": "", "confidence": 0.0, "volatility_outlook": "",
             "summary": "", "ticker_recs": {}, "updated": "", "history": [],
+        },
+        "thesis_intel": {
+            "active": False, "total_theses": 0, "confirmations": [],
+            "agreement_matrix": {}, "sector_signals": {},
+            "confidence_adjustment": 0.0, "thinkers": [], "categories": {},
         },
     }

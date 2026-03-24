@@ -89,7 +89,7 @@ class Curriculum:
 
         Invalid regimes are rejected and the regime resets to ``risk_on``.
         """
-        valid = ("risk_on", "risk_off", "crisis")
+        valid = ("risk_on", "risk_off", "crisis", "antifragile")
         if regime in valid:
             self._regime = regime
             logger.info(f"Curriculum regime set to: {regime}")

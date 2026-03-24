@@ -152,14 +152,14 @@ class DifferentialSharpeReward:
         # Transaction cost penalty
         tc_penalty = -eff_transaction_penalty * float(transaction_cost) / max(float(self._prev_portfolio_value), 1e-8)
 
-        # Holding penalty (penalize large concentrated positions)
+        # Holding penalty (penalize extreme concentrated positions)
         hold_penalty = 0.0
         if eff_holding_penalty > 0 and len(holdings) > 0:
             position_values = np.abs(holdings * prices)
             total_value = max(float(pv), 1e-8)
             max_weight = float(np.max(position_values)) / total_value
-            if max_weight > 0.15:  # Penalize >15% concentration
-                hold_penalty = -eff_holding_penalty * (max_weight - 0.15)
+            if max_weight > 0.35:  # Was 0.15 — allow concentrated conviction bets
+                hold_penalty = -eff_holding_penalty * (max_weight - 0.35)
 
         # P&L bonus: direct reward for positive returns, penalty for losses.
         # This complements the Sharpe component (which rewards consistency)

@@ -18,9 +18,9 @@ class EnvConfig(BaseModel):
     transaction_cost_bps: float = Field(default=5.0, ge=0, description="Transaction cost in basis points")
     slippage_bps: float = Field(default=2.0, ge=0, description="Slippage in basis points")
     spread_bps: float = Field(default=1.0, ge=0, description="Bid-ask spread in basis points")
-    max_position_pct: float = Field(default=0.15, gt=0, le=1.0)
-    max_drawdown_pct: float = Field(default=0.20, gt=0, le=1.0)
-    max_daily_loss_pct: float = Field(default=0.05, gt=0, le=1.0)
+    max_position_pct: float = Field(default=0.40, gt=0, le=1.0)
+    max_drawdown_pct: float = Field(default=0.25, gt=0, le=1.0)
+    max_daily_loss_pct: float = Field(default=0.08, gt=0, le=1.0)
     normalize_obs: bool = Field(default=True)
 
 
@@ -101,8 +101,8 @@ class TrainingConfig(BaseModel):
     tensorboard_log_dir: str = Field(default="logs/tensorboard")
     checkpoint_dir: str = Field(default="checkpoints")
     auto_tune_rewards: bool = Field(default=True, description="Enable CHIMERA-driven reward auto-tuning")
-    tune_every_n_gens: int = Field(default=5, ge=1, description="Tune reward weights every N generations")
-    tune_max_delta_pct: float = Field(default=0.20, gt=0, le=0.5, description="Max reward param change per tune step")
+    tune_every_n_gens: int = Field(default=3, ge=1, description="Tune reward weights every N generations")
+    tune_max_delta_pct: float = Field(default=0.35, gt=0, le=0.6, description="Max reward param change per tune step")
 
 
 class ComputeConfig(BaseModel):
@@ -131,12 +131,12 @@ class ValidationConfig(BaseModel):
 
     bootstrap_samples: int = Field(default=2000, ge=100)
     confidence_level: float = Field(default=0.95, gt=0, lt=1)
-    min_sharpe: float = Field(default=0.3)
-    max_drawdown_pct: float = Field(default=0.25)
-    min_win_rate: float = Field(default=0.40)
-    min_profit_factor: float = Field(default=1.1)
-    walk_forward_windows: int = Field(default=4, ge=2)
-    min_wfe: float = Field(default=0.40, description="Walk-forward efficiency")
+    min_sharpe: float = Field(default=0.50)
+    max_drawdown_pct: float = Field(default=0.20)
+    min_win_rate: float = Field(default=0.52)
+    min_profit_factor: float = Field(default=1.3)
+    walk_forward_windows: int = Field(default=6, ge=2)
+    min_wfe: float = Field(default=0.50, description="Walk-forward efficiency")
 
 
 class ForwardTestConfig(BaseModel):

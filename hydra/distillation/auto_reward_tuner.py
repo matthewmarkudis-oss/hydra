@@ -29,14 +29,14 @@ _DEFAULTS = {
 
 # Schema bounds (min, max) for each tunable parameter
 _BOUNDS = {
-    "drawdown_penalty": (0.0, 2.0),
+    "drawdown_penalty": (0.0, 5.0),    # Was 2.0 — allow crisis-level penalties
     "transaction_penalty": (0.0, 1.0),
     "holding_penalty": (0.0, 1.0),
-    "pnl_bonus_weight": (0.5, 20.0),  # floor at 0.5 to prevent "don't trade"
+    "pnl_bonus_weight": (0.5, 30.0),   # Was 20.0 — allow aggressive P&L targeting
     "reward_scale": (10.0, 500.0),
-    "cash_drag_penalty": (0.05, 1.0),
-    "benchmark_bonus_weight": (0.5, 10.0),
-    "min_deployment_pct": (0.1, 0.7),
+    "cash_drag_penalty": (0.05, 2.0),   # Was 1.0 — allow stronger deployment pressure
+    "benchmark_bonus_weight": (0.5, 15.0),  # Was 10.0 — allow stronger benchmark targeting
+    "min_deployment_pct": (0.05, 0.7),  # Was 0.1 floor — allow lighter deployment in crisis
 }
 
 # Mutation type → (parameter_name, direction)
@@ -62,12 +62,12 @@ class AutoRewardTuner:
 
     def __init__(
         self,
-        tune_every_n: int = 5,
-        max_delta_pct: float = 0.20,
+        tune_every_n: int = 3,
+        max_delta_pct: float = 0.35,
         enabled: bool = True,
     ):
         self.tune_every_n = max(1, tune_every_n)
-        self.max_delta_pct = max(0.01, min(max_delta_pct, 0.50))
+        self.max_delta_pct = max(0.01, min(max_delta_pct, 0.60))
         self.enabled = enabled
         self._history: list[dict[str, float]] = []
 
@@ -125,9 +125,9 @@ class AutoRewardTuner:
             current_val = current_params[param_name]
             lo, hi = _BOUNDS.get(param_name, (0.0, 100.0))
 
-            # Step proportional to net vote strength relative to total mutations
-            strength = abs(net_vote) / max(total_relevant, 1)
-            step = self.max_delta_pct * current_val * strength
+            # Full step per mutation — no dilution by vote count.
+            # If CHIMERA says adjust, we adjust decisively.
+            step = self.max_delta_pct * current_val
 
             if net_vote > 0:
                 new_val = current_val + step

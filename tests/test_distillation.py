@@ -227,12 +227,14 @@ class TestRegimeRewards:
         assert "risk_off" in REGIME_MULTIPLIERS
         assert "crisis" in REGIME_MULTIPLIERS
 
-    def test_risk_on_near_neutral(self):
-        """Risk-on multipliers should be near 1.0 (backward compatible)."""
+    def test_risk_on_is_aggressive(self):
+        """Risk-on multipliers should lean aggressive (higher P&L, lower DD penalty)."""
         from hydra.distillation.regime_rewards import get_multipliers
         mult = get_multipliers("risk_on")
+        assert mult["pnl_bonus_weight"] >= 1.5, "risk_on should amplify P&L bonus"
+        assert mult["drawdown_penalty"] <= 0.8, "risk_on should ease drawdown penalty"
         for key, val in mult.items():
-            assert 0.5 <= val <= 1.5, f"risk_on {key}={val} not near neutral"
+            assert 0.3 <= val <= 2.0, f"risk_on {key}={val} out of expected range"
 
     def test_crisis_amplifies_drawdown(self):
         """Crisis should significantly increase drawdown penalty."""

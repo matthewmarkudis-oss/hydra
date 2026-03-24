@@ -52,7 +52,7 @@ class TD3Agent(BaseRLAgent):
         self.target_policy_noise = target_policy_noise
         self.target_noise_clip = target_noise_clip
         self.learning_starts = learning_starts
-        self.net_arch = net_arch or [256, 256]
+        self.net_arch = net_arch or [512, 512, 256]
 
         self._device = _get_device(prefer_gpu)
         self._model = None

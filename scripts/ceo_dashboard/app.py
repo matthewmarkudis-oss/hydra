@@ -334,6 +334,21 @@ else:
     status_dot = "#EF4444"
     status_text = "No data — run a training cycle first"
 
+# Build info line for header: tickers, timeframe, intraday bars
+_tickers = data.get("tickers", [])
+_lookback = data.get("lookback_days", 60)
+_num_stocks = data.get("num_stocks", 0)
+_real_data = data.get("real_data", False)
+_info_parts = []
+if _tickers:
+    _info_parts.append(", ".join(str(t) for t in _tickers[:8]))
+if _lookback:
+    _info_parts.append(f"{_lookback}d lookback")
+if _num_stocks:
+    _info_parts.append(f"{_num_stocks} stocks")
+_info_parts.append("5min intraday bars" if _real_data else "Synthetic data")
+status_info_line = " &middot; ".join(_info_parts)
+
 hydra_svg = _build_hydra_svg(active=is_training)
 
 # Progress bar (only when training)
@@ -373,11 +388,13 @@ components.html(f"""
       {hydra_svg}
     </div>
   </div>
-  <div style="text-align:right;">
-    <div style="font-size:12px;color:rgba(255,255,255,0.7);">
-      <span style="color:{status_dot}">&#9679;</span> {status_text}</div>
-    <div style="font-size:11px;color:rgba(255,255,255,0.5);">
-      Last updated: <span style="color:rgba(255,255,255,0.8);font-weight:500;">
+  <div style="text-align:right;max-width:500px;">
+    <div style="font-size:22px;font-weight:600;color:rgba(255,255,255,0.9);line-height:1.3;">
+      <span style="color:{status_dot};font-size:14px;vertical-align:middle;">&#9679;</span> {status_text}</div>
+    <div style="font-size:13px;color:#C8A951;margin-top:4px;letter-spacing:0.5px;">
+      {status_info_line}</div>
+    <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:2px;">
+      Last updated: <span style="color:rgba(255,255,255,0.7);font-weight:500;">
       {data["updated"]}</span></div>
   </div>
 </div>
@@ -536,9 +553,9 @@ if cg:
             )
         else:
             st.metric(
-                "Best Score",
-                f"{cg_eval:.0f}",
-                delta="Reward (not $)",
+                "Portfolio Value",
+                f"${STARTING_CAPITAL_CAD:,.2f}",
+                delta="Starting capital — no trades yet",
             )
     with c2:
         if cg_has_pnl:
@@ -614,9 +631,9 @@ if atb:
             )
         else:
             st.metric(
-                "Peak Score",
-                f"{atb_eval:.0f}",
-                delta=f"Gen {atb_eval_gen} — {atb_eval_agent}",
+                "Portfolio Value",
+                f"${STARTING_CAPITAL_CAD:,.2f}",
+                delta=f"Starting capital — best score: {atb_eval:.0f}",
             )
     with a2:
         if atb_has_pnl and atb_ret is not None:
@@ -998,6 +1015,87 @@ if _geo.get("current_regime"):
           </div>
         </div>
         """, height=45)
+
+    # === THESIS LIBRARY INTEL (shown alongside geopolitics) ===
+    _thesis = data.get("thesis_intel", {})
+    if _thesis.get("active"):
+        st.markdown(
+            '<div class="section-header" style="margin-top:12px;">STRATEGIC THESIS LIBRARY</div>',
+            unsafe_allow_html=True,
+        )
+
+        _t_total = _thesis.get("total_theses", 0)
+        _t_thinkers = _thesis.get("thinkers", [])
+        _t_confirmations = _thesis.get("confirmations", [])
+        _t_agreement = _thesis.get("agreement_matrix", {})
+        _t_sectors = _thesis.get("sector_signals", {})
+        _t_conf_adj = _thesis.get("confidence_adjustment", 0.0)
+
+        # Summary row
+        th1, th2, th3, th4 = st.columns(4)
+        with th1:
+            st.metric("Theses Loaded", str(_t_total), delta=f"{len(_t_thinkers)} thinkers")
+        with th2:
+            n_conf = len(_t_confirmations)
+            st.metric(
+                "Active Confirmations",
+                str(n_conf),
+                delta="Headlines match thesis keywords" if n_conf > 0 else "No matches yet",
+            )
+        with th3:
+            adj_color = "normal" if _t_conf_adj >= 0 else "inverse"
+            st.metric(
+                "Confidence Adj.",
+                f"{_t_conf_adj:+.3f}",
+                delta="Boost from agreement" if _t_conf_adj > 0 else ("Penalty from disagreement" if _t_conf_adj < 0 else "Neutral"),
+                delta_color=adj_color,
+            )
+        with th4:
+            n_cats = len(_t_agreement)
+            st.metric("Categories Active", str(n_cats), delta=", ".join(_t_agreement.keys()) if n_cats else "None")
+
+        # Confirmed theses detail
+        if _t_confirmations:
+            with st.expander(f"Confirmed Theses ({len(_t_confirmations)})", expanded=True):
+                for conf in _t_confirmations:
+                    thinker = conf.get("thinker", "")
+                    cat = conf.get("category", "")
+                    matched = conf.get("keywords_matched", [])
+                    strength = conf.get("match_strength", 0)
+                    impl = conf.get("sector_implications", {})
+                    ow = impl.get("overweight", [])
+                    uw = impl.get("underweight", [])
+
+                    strength_pct = int(strength * 100)
+                    impl_text = ""
+                    if ow:
+                        impl_text += f" | OW: {', '.join(ow)}"
+                    if uw:
+                        impl_text += f" | UW: {', '.join(uw)}"
+
+                    st.markdown(
+                        f"**{thinker}** ({cat}) — "
+                        f"matched: *{', '.join(matched)}* "
+                        f"({strength_pct}% strength)"
+                        f"{impl_text}",
+                    )
+
+        # Sector signals
+        if _t_sectors:
+            st.markdown("**Sector Signals** (aggregated from confirmed theses)")
+            for sector, score in sorted(_t_sectors.items(), key=lambda x: x[1], reverse=True):
+                if score > 0:
+                    st.markdown(
+                        f":chart_with_upwards_trend: **{sector}**: "
+                        f"<span style='color:{COLORS['green']}'>{score:+.2f}</span>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f":chart_with_downwards_trend: **{sector}**: "
+                        f"<span style='color:{COLORS['red']}'>{score:+.2f}</span>",
+                        unsafe_allow_html=True,
+                    )
 
     st.divider()
 

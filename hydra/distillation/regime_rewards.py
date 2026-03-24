@@ -20,37 +20,41 @@ from __future__ import annotations
 
 REGIME_MULTIPLIERS: dict[str, dict[str, float]] = {
     "risk_on": {
-        "drawdown_penalty": 0.8,
-        "transaction_penalty": 1.0,
-        "holding_penalty": 1.0,
-        "pnl_bonus_weight": 1.2,
-        "sharpe_eta": 1.0,
-        "reward_scale": 1.0,
+        # Bull market: lean into winners, loosen drawdown, push for returns
+        "drawdown_penalty": 0.5,        # Was 0.8 — accept more DD in favorable conditions
+        "transaction_penalty": 0.8,     # Was 1.0 — cheaper to rebalance
+        "holding_penalty": 0.5,         # Was 1.0 — allow concentration on winners
+        "pnl_bonus_weight": 1.8,        # Was 1.2 — aggressively reward profits
+        "sharpe_eta": 0.8,              # Was 1.0 — slower EMA = smoother in trending markets
+        "reward_scale": 1.2,            # Was 1.0 — amplify signal during good times
     },
     "risk_off": {
-        "drawdown_penalty": 1.5,
-        "transaction_penalty": 0.8,
-        "holding_penalty": 1.2,
-        "pnl_bonus_weight": 0.7,
-        "sharpe_eta": 1.2,
-        "reward_scale": 0.9,
+        # Defensive: tighten risk, reduce reward for small wins, protect capital
+        "drawdown_penalty": 3.0,        # Was 1.5 — hard punishment for losses
+        "transaction_penalty": 0.5,     # Was 0.8 — let agents exit positions cheaply
+        "holding_penalty": 1.5,         # Was 1.2 — diversify away concentration risk
+        "pnl_bonus_weight": 0.3,        # Was 0.7 — don't chase small wins in bad markets
+        "sharpe_eta": 1.5,              # Was 1.2 — faster EMA to react to regime shifts
+        "reward_scale": 0.7,            # Was 0.9 — dampen signal to prevent overtrading
     },
     "crisis": {
-        "drawdown_penalty": 2.5,
-        "transaction_penalty": 0.5,
-        "holding_penalty": 1.5,
-        "pnl_bonus_weight": 0.3,
-        "sharpe_eta": 1.5,
-        "reward_scale": 0.7,
+        # Survival: capital preservation above all, only trade to exit
+        "drawdown_penalty": 5.0,        # Was 2.5 — maximum loss aversion
+        "transaction_penalty": 0.3,     # Was 0.5 — free to liquidate positions
+        "holding_penalty": 2.0,         # Was 1.5 — no concentrated bets
+        "pnl_bonus_weight": 0.1,        # Was 0.3 — almost no reward for profits
+        "sharpe_eta": 2.0,              # Was 1.5 — very fast EMA, respond immediately
+        "reward_scale": 0.4,            # Was 0.7 — heavy signal dampening
     },
     "antifragile": {
-        # Taleb barbell: protect the core, swing hard on asymmetric bets
-        "drawdown_penalty": 2.0,       # Tight ruin protection (the "safe" end)
-        "transaction_penalty": 1.3,     # Discourage panic trading, force conviction
-        "holding_penalty": 0.6,         # Let winners run — don't punish holding
-        "pnl_bonus_weight": 1.8,        # Reward outsized wins (the "aggressive" end)
+        # Taleb barbell: tight ruin protection + massive upside rewards
+        # The asymmetry is the point: protect the core, then swing hard
+        "drawdown_penalty": 3.0,        # Was 2.0 — tight ruin protection (safe end)
+        "transaction_penalty": 1.5,     # Was 1.3 — force conviction, no panic trading
+        "holding_penalty": 0.3,         # Was 0.6 — LET WINNERS RUN
+        "pnl_bonus_weight": 3.0,        # Was 1.8 — massive reward for outsized wins
         "sharpe_eta": 1.3,              # Slightly faster EMA for volatile conditions
-        "reward_scale": 1.1,            # Amplify signal — volatile markets need stronger gradients
+        "reward_scale": 1.5,            # Was 1.1 — amplify everything in volatile markets
     },
 }
 

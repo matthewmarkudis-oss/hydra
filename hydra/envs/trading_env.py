@@ -54,9 +54,9 @@ class TradingEnv(gym.Env):
         holding_penalty: float = 0.02,
         pnl_bonus_weight: float = 5.0,
         reward_scale: float = 100.0,
-        cash_drag_penalty: float = 0.3,
+        cash_drag_penalty: float = 0.10,
         benchmark_bonus_weight: float = 2.0,
-        min_deployment_pct: float = 0.3,
+        min_deployment_pct: float = 0.10,
         dead_zone: float = 0.0,
         normalize_obs: bool = True,
         augment: bool = False,
@@ -302,9 +302,10 @@ class TradingEnv(gym.Env):
         terminated = False
         truncated = should_truncate or (self._step_count >= self.episode_bars)
 
-        # If halted by constraints, apply negative penalty (preserves learning signal)
-        if is_halted and not should_truncate:
-            reward = min(reward, -0.01 * float(self.reward_fn.reward_scale))
+        # Note: when halted by constraints, we do NOT override the reward.
+        # The constraint violation already impacts portfolio value, which flows
+        # through the reward function naturally. Clamping reward to a negative
+        # constant corrupts the learning signal.
 
         # Build next observation
         obs_step = min(self._step_count, self.episode_bars - 1)

@@ -254,8 +254,8 @@ class TestCashDragPenalty:
         _, info = reward_fn.compute(initial_cash, 0.0, holdings, prices)
         assert info["cash_drag"] == pytest.approx(0.0, abs=0.01)
 
-    def test_deployment_penalty_fires_below_threshold(self):
-        """Deployment penalty triggers when deployed < min_deployment_pct."""
+    def test_deployment_penalty_removed(self):
+        """Deployment penalty is always zero (removed to avoid double-counting with cash_drag)."""
         reward_fn = DifferentialSharpeReward(
             cash_drag_penalty=0.3,
             min_deployment_pct=0.3,
@@ -268,11 +268,12 @@ class TestCashDragPenalty:
         # Only 10% deployed
         holdings = np.array([50.0, 100.0, 10.0], dtype=np.float32)
         prices = np.array([100.0, 50.0, 200.0], dtype=np.float32)
-        # position_value = 5000 + 5000 + 2000 = 12000, deployed_pct = 0.12
 
         _, info = reward_fn.compute(100_000.0, 0.0, holdings, prices)
-        assert info["deployment_penalty"] < 0, "Expected negative deployment penalty"
+        assert info["deployment_penalty"] == 0.0, "Deployment penalty should be zero (removed)"
         assert info["deployed_pct"] < 0.3
+        # Cash drag still penalizes low deployment
+        assert info["cash_drag"] < 0, "Cash drag should still penalize undeployed capital"
 
     def test_benchmark_bonus_rewards_outperformance(self):
         """Benchmark bonus is positive when portfolio outperforms."""

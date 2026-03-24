@@ -61,8 +61,8 @@ class AgentConvictionTracker:
         beta_prior: float = 2.0,
         learning_rate: float = 0.25,
         max_adjustment: float = 0.20,
-        new_agent_scale: float = 0.50,
-        trust_threshold: int = 5,
+        new_agent_scale: float = 0.80,
+        trust_threshold: int = 10,
     ):
         self.agent_name = agent_name
         self.alpha_prior = alpha_prior
@@ -199,8 +199,8 @@ class ConvictionCalibrator:
         beta_prior: float = 2.0,
         learning_rate: float = 0.25,
         max_adjustment: float = 0.20,
-        new_agent_scale: float = 0.50,
-        trust_threshold: int = 5,
+        new_agent_scale: float = 0.80,
+        trust_threshold: int = 10,
         persistence_dir: str | None = None,
     ):
         self.alpha_prior = alpha_prior

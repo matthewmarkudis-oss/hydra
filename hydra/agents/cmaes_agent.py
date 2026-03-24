@@ -73,11 +73,14 @@ class CMAESAgent(BaseRLAgent):
 
         # Handle both VecEnv and regular Env
         if hasattr(env, "num_envs"):
-            # VecEnv — use first sub-env
-            obs = env.reset()
-            if isinstance(obs, tuple):
-                obs = obs[0]
-            obs = obs[0] if obs.ndim > 1 else obs
+            # VecEnv — reset returns (obs_array, info_dict) tuple
+            reset_result = env.reset()
+            if isinstance(reset_result, tuple):
+                obs = reset_result[0]  # Extract observations, not info
+            else:
+                obs = reset_result
+            if obs.ndim > 1:
+                obs = obs[0]  # First sub-env
         else:
             obs, _ = env.reset()
 

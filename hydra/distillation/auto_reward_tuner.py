@@ -22,9 +22,9 @@ _DEFAULTS = {
     "holding_penalty": 0.02,
     "pnl_bonus_weight": 5.0,
     "reward_scale": 100.0,
-    "cash_drag_penalty": 0.3,
+    "cash_drag_penalty": 0.10,
     "benchmark_bonus_weight": 2.0,
-    "min_deployment_pct": 0.3,
+    "min_deployment_pct": 0.10,
     "alpha_target_weight": 3.0,
 }
 

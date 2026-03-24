@@ -50,9 +50,9 @@ class RewardConfig(BaseModel):
     holding_penalty: float = Field(default=0.02, ge=0, description="Penalty for large/idle positions")
     pnl_bonus_weight: float = Field(default=5.0, ge=0, description="Weight for direct P&L return bonus")
     reward_scale: float = Field(default=100.0, gt=0, description="Multiplier for reward signal magnitude")
-    cash_drag_penalty: float = Field(default=0.3, ge=0, description="Penalty for undeployed capital")
+    cash_drag_penalty: float = Field(default=0.10, ge=0, description="Penalty for undeployed capital")
     benchmark_bonus_weight: float = Field(default=2.0, ge=0, description="Weight for benchmark outperformance")
-    min_deployment_pct: float = Field(default=0.3, ge=0, le=1.0, description="Minimum invested fraction")
+    min_deployment_pct: float = Field(default=0.10, ge=0, le=1.0, description="Minimum invested fraction (deployment penalty removed, informational only)")
     alpha_target_weight: float = Field(default=3.0, ge=0, description="Weight for cumulative alpha vs benchmark")
 
 

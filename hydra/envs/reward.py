@@ -29,9 +29,9 @@ class DifferentialSharpeReward:
         holding_penalty: float = 0.02,
         pnl_bonus_weight: float = 5.0,
         reward_scale: float = 100.0,
-        cash_drag_penalty: float = 0.3,
+        cash_drag_penalty: float = 0.10,
         benchmark_bonus_weight: float = 2.0,
-        min_deployment_pct: float = 0.3,
+        min_deployment_pct: float = 0.10,
         alpha_target_weight: float = 3.0,
     ):
         self.eta = np.float32(eta)
@@ -126,7 +126,7 @@ class DifferentialSharpeReward:
         eff_holding_penalty = float(self.holding_penalty) * mult["holding_penalty"]
         eff_pnl_bonus_weight = float(self.pnl_bonus_weight) * mult["pnl_bonus_weight"]
         eff_reward_scale = float(self.reward_scale) * mult["reward_scale"]
-        eff_cash_drag_penalty = float(self.cash_drag_penalty)
+        eff_cash_drag_penalty = float(self.cash_drag_penalty) * mult.get("cash_drag_penalty", 1.0)
         eff_benchmark_bonus_weight = float(self.benchmark_bonus_weight)
 
         # Step return
@@ -179,12 +179,9 @@ class DifferentialSharpeReward:
         cash_ratio = max(0.0, 1.0 - position_value / max(float(pv), 1e-8))
         cash_drag = -eff_cash_drag_penalty * cash_ratio
 
-        # Minimum deployment target — escalating penalty below threshold
-        deployment_penalty = 0.0
+        # Deployment tracking (no penalty — cash_drag already handles this).
         deployed_pct = position_value / max(float(pv), 1e-8)
-        if deployed_pct < float(self.min_deployment_pct):
-            shortfall = float(self.min_deployment_pct) - deployed_pct
-            deployment_penalty = -eff_cash_drag_penalty * shortfall * 2.0
+        deployment_penalty = 0.0
 
         # Benchmark bonus — reward outperforming the benchmark per step
         benchmark_bonus = 0.0
@@ -195,12 +192,13 @@ class DifferentialSharpeReward:
             benchmark_bonus = eff_benchmark_bonus_weight * excess_return
 
         # Cumulative alpha target — reward for beating the benchmark overall,
-        # not just per-step. This creates a persistent signal that the agent
-        # should be accumulating excess return vs the benchmark.
+        # not just per-step. Normalized by step count to keep the reward
+        # stationary (same action = same magnitude at step 1 and step 78).
         self._cumulative_return += float(step_return)
         self._cumulative_bench_return += bench_return
         cumulative_alpha = float(self._cumulative_return - self._cumulative_bench_return)
-        alpha_bonus = float(self.alpha_target_weight) * cumulative_alpha
+        avg_alpha = cumulative_alpha / max(self._step_idx, 1)
+        alpha_bonus = float(self.alpha_target_weight) * avg_alpha
 
         total_reward = (
             sharpe_reward + pnl_bonus + dd_penalty + tc_penalty

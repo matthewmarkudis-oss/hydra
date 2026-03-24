@@ -224,30 +224,16 @@ class PopulationTrainer:
             # 4. Update rankings
             self.pool.update_rankings(eval_scores)
 
-            # 4b. Pre-deployment gate: block agents that never trade
-            blocked_agents = set()
+            # 4b. Pre-deployment logging (no blocking — agents learn at their own pace)
             for name, pnl_data in agent_pnl.items():
                 cash_ratio = pnl_data.get("mean_cash_ratio", 1.0)
-                if cash_ratio >= 0.99:  # Never deployed capital
-                    blocked_agents.add(name)
-                    logger.warning(
-                        f"  BLOCKED from promotion: {name} "
-                        f"(cash_ratio={cash_ratio:.2%}, never deployed)"
+                if cash_ratio >= 0.99:
+                    logger.info(
+                        f"  NOTE: {name} cash_ratio={cash_ratio:.2%} (not yet deploying)"
                     )
-
-            # Temporarily set blocked agents to -inf ranking so they can't promote
-            saved_rankings = {}
-            for name in blocked_agents:
-                if name in self.pool._rankings:
-                    saved_rankings[name] = self.pool._rankings[name]
-                    self.pool._rankings[name] = float("-inf")
 
             # 5. Promote top learning agents
             promoted = self.pool.promote_top(self.top_k_promote)
-
-            # Restore rankings (blocked agents still train, just can't promote)
-            for name, score in saved_rankings.items():
-                self.pool._rankings[name] = score
 
             # 6. Demote bottom static agents (keep pool size manageable)
             demoted = self.pool.demote_bottom(self.bottom_k_demote)
@@ -360,27 +346,29 @@ class PopulationTrainer:
                             )
 
                         # Regime injection from Geopolitics Expert via corp state
+                        # NOTE: During training, the data-driven classifier
+                        # (based on actual agent performance) takes precedence
+                        # over the geopolitics expert (based on news headlines
+                        # that are irrelevant to historical training data).
+                        # We log the suggestion but do NOT override the regime.
                         int_regime = intervention.get("regime")
                         if int_regime:
-                            self.curriculum.set_regime(int_regime)
-                            if hasattr(self.env, "reward_fn"):
-                                try:
-                                    self.env.reward_fn.set_regime(int_regime)
-                                    logger.info(f"  Reward regime set to: {int_regime} (from corp state)")
-                                except Exception as e:
-                                    logger.debug(f"  Could not set reward regime: {e}")
+                            current_regime = self.curriculum.regime
+                            logger.info(
+                                f"  Corp state suggests regime: {int_regime} "
+                                f"(ignored — data-driven regime '{current_regime}' takes precedence)"
+                            )
 
                         # Weight overrides from Risk Manager (circuit breaker enforcement)
+                        # During training, log but do NOT enforce — allow agents
+                        # to learn from mistakes rather than being silently muzzled.
                         weight_overrides = intervention.get("weight_overrides")
                         if weight_overrides:
                             for agent_name, new_weight in weight_overrides.items():
-                                try:
-                                    self.pool.set_weight(agent_name, new_weight)
-                                    logger.info(
-                                        f"  RISK MANAGER: {agent_name} weight → {new_weight:.4f}"
-                                    )
-                                except Exception:
-                                    pass
+                                logger.info(
+                                    f"  RISK MANAGER suggests: {agent_name} weight → {new_weight:.4f} "
+                                    f"(not enforced during training)"
+                                )
                 except Exception as e:
                     logger.warning(f"Intervention hook failed: {e}")
 

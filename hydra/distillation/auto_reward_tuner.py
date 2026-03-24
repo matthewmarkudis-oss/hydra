@@ -48,7 +48,7 @@ _MUTATION_MAP: dict[str, list[tuple[str, int]]] = {
     "decrease_drawdown_penalty": [("drawdown_penalty", -1)],
     "tighten_risk": [("drawdown_penalty", +1)],
     "loosen_risk": [("drawdown_penalty", -1), ("transaction_penalty", -1)],
-    "prioritize_consistency": [("holding_penalty", +1), ("transaction_penalty", +1)],
+    "prioritize_consistency": [("pnl_bonus_weight", +1)],  # Reward profitability, don't add friction
     "increase_deployment": [("cash_drag_penalty", +1), ("min_deployment_pct", +1)],
     "reward_outperformance": [("benchmark_bonus_weight", +1), ("pnl_bonus_weight", +1), ("alpha_target_weight", +1)],
 }

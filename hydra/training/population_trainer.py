@@ -565,7 +565,7 @@ class PopulationTrainer:
                 for cb in cb_actions:
                     target = cb.target_agent or "portfolio"
                     logger.info(
-                        f"  CIRCUIT BREAKER: {cb.action} → {target} "
+                        f"  CIRCUIT BREAKER: {cb.action} -> {target} "
                         f"(reduction={cb.reduction_pct:.0%})"
                     )
 
@@ -606,9 +606,12 @@ class PopulationTrainer:
             for agent_name, weight in result.weights_after.items():
                 self.pool.set_weight(agent_name, weight)
 
+            top_by_weight = sorted(
+                result.weights_after.items(), key=lambda x: x[1], reverse=True
+            )[:3]
             logger.info(
-                f"  PROMETHEUS: rebalanced weights — "
-                f"top={list(result.weights_after.items())[:2]}"
+                f"  PROMETHEUS: rebalanced weights -- "
+                f"top={top_by_weight}"
             )
 
             return result
@@ -695,8 +698,11 @@ class PopulationTrainer:
             )
             return "crisis"
 
-        # Risk-off: mild losses or flat, moderate vol
-        if avg_return < 0 and reward_trend < 0:
+        # Risk-off: sustained losses with negative momentum.
+        # Threshold at -0.5% avg return to avoid triggering during early
+        # training when agents are still learning (marginally negative
+        # returns are normal, not a sign of adverse market conditions).
+        if avg_return < -0.5 and reward_trend < -50:
             logger.info(
                 f"  REGIME: RISK_OFF (avg_ret={avg_return:.1f}%, trend={reward_trend:.0f})"
             )

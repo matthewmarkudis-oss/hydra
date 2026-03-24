@@ -117,13 +117,17 @@ class CompetitionRebalancer:
     ) -> dict[str, float]:
         """Rebalance weights based on competition rankings.
 
-        Linear adjustment: top-ranked agents gain weight, bottom lose.
-        EMA smoothing blends new target with current weights to prevent
-        wild swings. Per-generation change cap limits how much any single
-        agent's weight can move.
+        Uses rank-proportional target allocation: the best agent always
+        gets the highest target weight regardless of its current weight.
+        This prevents the compounding decay that occurs when adjustments
+        are additive on shrinking base weights.
+
+        EMA smoothing blends the rank target with current weights to
+        prevent wild swings. Per-generation change cap limits how much
+        any single agent's weight can move.
 
         Args:
-            current_weights: Current agent → weight mapping.
+            current_weights: Current agent -> weight mapping.
             ranked_agents: Agents sorted by composite (best first).
 
         Returns:
@@ -133,27 +137,26 @@ class CompetitionRebalancer:
         if n == 0:
             return current_weights
 
-        # Step 1: compute raw target weights from ranking
-        raw_weights = dict(current_weights)
-
+        # Step 1: compute rank-proportional target weights.
+        # Best agent gets n shares, worst gets 1 share.
+        # This is path-independent — targets depend only on current
+        # ranking, not on accumulated weight history.
+        total_shares = n * (n + 1) / 2  # sum of 1..n
+        raw_weights = {}
         for i, agent in enumerate(ranked_agents):
-            name = agent.agent_name
-            if name not in raw_weights:
-                raw_weights[name] = 1.0 / n
-
-            # Linear: top gets +step, bottom gets -step
-            if n > 1:
-                adjustment = self.adjustment_step * (1 - 2 * i / (n - 1))
-            else:
-                adjustment = 0.0
-
-            raw_weights[name] = max(
+            shares = n - i  # best=n, worst=1
+            raw_weights[agent.agent_name] = max(
                 self.min_weight,
-                min(self.max_weight, raw_weights[name] + adjustment)
+                min(self.max_weight, shares / total_shares),
             )
 
-        # Step 2: EMA smoothing — blend raw target with current weights
-        # new = alpha * raw + (1 - alpha) * current
+        # Include any agents in current_weights not in ranked_agents
+        for name in current_weights:
+            if name not in raw_weights:
+                raw_weights[name] = self.min_weight
+
+        # Step 2: EMA smoothing — blend rank target with current weights
+        # ema_alpha=0.70 means 70% new target + 30% old weight
         smoothed_weights = {}
         for name in raw_weights:
             old_w = current_weights.get(name, raw_weights[name])

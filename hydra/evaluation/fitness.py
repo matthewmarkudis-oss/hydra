@@ -15,11 +15,11 @@ import numpy as np
 
 # Default fitness weights (same as CHIMERA's EvolutionState defaults)
 DEFAULT_FITNESS_WEIGHTS: dict[str, float] = {
-    "sharpe": 0.35,
-    "max_dd": 0.20,
-    "profit_factor": 0.20,
+    "sharpe": 0.20,
+    "max_dd": 0.15,
+    "profit_factor": 0.35,
     "wfe": 0.15,
-    "consistency": 0.10,
+    "consistency": 0.15,
 }
 
 _STABILITY_FLOOR = 0.25

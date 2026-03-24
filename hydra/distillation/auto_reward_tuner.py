@@ -30,7 +30,7 @@ _DEFAULTS = {
 
 # Schema bounds (min, max) for each tunable parameter
 _BOUNDS = {
-    "drawdown_penalty": (0.0, 5.0),    # Was 2.0 — allow crisis-level penalties
+    "drawdown_penalty": (0.0, 1.0),    # Capped at 1.0 — higher values crush the profit signal
     "transaction_penalty": (0.0, 1.0),
     "holding_penalty": (0.0, 1.0),
     "pnl_bonus_weight": (0.5, 30.0),   # Was 20.0 — allow aggressive P&L targeting
@@ -46,7 +46,7 @@ _BOUNDS = {
 _MUTATION_MAP: dict[str, list[tuple[str, int]]] = {
     "increase_drawdown_penalty": [("drawdown_penalty", +1)],
     "decrease_drawdown_penalty": [("drawdown_penalty", -1)],
-    "tighten_risk": [("drawdown_penalty", +1)],
+    "tighten_risk": [("pnl_bonus_weight", +1)],  # Reward profitability instead of penalizing losses
     "loosen_risk": [("drawdown_penalty", -1), ("transaction_penalty", -1)],
     "prioritize_consistency": [("pnl_bonus_weight", +1)],  # Reward profitability, don't add friction
     "increase_deployment": [("cash_drag_penalty", +1), ("min_deployment_pct", +1)],

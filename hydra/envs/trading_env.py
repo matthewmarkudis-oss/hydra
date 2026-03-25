@@ -45,7 +45,7 @@ class TradingEnv(gym.Env):
         transaction_cost_bps: float = 5.0,
         slippage_bps: float = 2.0,
         spread_bps: float = 1.0,
-        max_position_pct: float = 0.30,
+        max_position_pct: float = 0.50,
         max_drawdown_pct: float = 0.50,
         max_daily_loss_pct: float = 0.50,
         sharpe_eta: float = 0.05,

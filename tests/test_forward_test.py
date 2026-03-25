@@ -429,7 +429,7 @@ class TestConfigDefaults:
         from hydra.config.schema import HydraConfig
 
         config = HydraConfig()
-        assert config.env.max_position_pct == 0.40
+        assert config.env.max_position_pct == 0.50
 
     def test_alert_config_fields(self):
         from hydra.forward_test.config import ForwardTestConfig

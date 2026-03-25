@@ -297,7 +297,7 @@ class TestCashDragPenalty:
         assert info["benchmark_bonus"] > 0, "Expected positive benchmark bonus for outperformance"
 
     def test_holding_penalty_concentration_only(self):
-        """Holding penalty only penalizes extreme concentration (>35%), not moderate positions."""
+        """Holding penalty only penalizes extreme concentration (>60%), not moderate positions."""
         reward_fn = DifferentialSharpeReward(
             holding_penalty=0.1,
             cash_drag_penalty=0.0,
@@ -307,15 +307,15 @@ class TestCashDragPenalty:
         initial_cash = 100_000.0
         reward_fn.reset(initial_cash)
 
-        # 50% max weight > 35% threshold → should penalize
-        holdings = np.array([500.0, 250.0, 250.0], dtype=np.float32)
+        # 70% max weight > 60% threshold → should penalize
+        holdings = np.array([700.0, 150.0, 150.0], dtype=np.float32)
         prices = np.array([100.0, 100.0, 100.0], dtype=np.float32)
 
         _, info = reward_fn.compute(initial_cash, 0.0, holdings, prices)
-        # 50% concentration should trigger penalty (above 35% threshold)
-        assert info["holding_penalty"] < 0, "50% position should trigger holding penalty"
+        # 70% concentration should trigger penalty (above 60% threshold)
+        assert info["holding_penalty"] < 0, "70% position should trigger holding penalty"
 
-        # 20% max weight should NOT trigger penalty (below 35% threshold)
+        # 50% max weight should NOT trigger penalty (below 60% threshold)
         reward_fn2 = DifferentialSharpeReward(
             holding_penalty=0.1,
             cash_drag_penalty=0.0,
@@ -323,10 +323,10 @@ class TestCashDragPenalty:
             drawdown_penalty=0.0,
         )
         reward_fn2.reset(initial_cash)
-        holdings_moderate = np.array([200.0, 150.0, 100.0], dtype=np.float32)
+        holdings_moderate = np.array([500.0, 250.0, 250.0], dtype=np.float32)
         prices_moderate = np.array([100.0, 100.0, 100.0], dtype=np.float32)
         _, info_mod = reward_fn2.compute(initial_cash, 0.0, holdings_moderate, prices_moderate)
-        assert info_mod["holding_penalty"] == 0.0, "20% position should not trigger holding penalty"
+        assert info_mod["holding_penalty"] == 0.0, "50% position should not trigger holding penalty"
 
 
 class TestZeroTradeFitness:

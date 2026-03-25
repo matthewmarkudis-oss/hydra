@@ -152,10 +152,14 @@ class DifferentialSharpeReward:
         else:
             sharpe_reward = float(step_return)
 
-        # Drawdown penalty
+        # Drawdown penalty — 3% dead zone so agents ride through normal dips
         self._peak_value = max(self._peak_value, pv)
         drawdown = float((pv - self._peak_value) / max(float(self._peak_value), 1e-8))
-        dd_penalty = eff_drawdown_penalty * min(drawdown, 0.0)  # negative when in drawdown
+        dd_threshold = -0.03  # Ignore pullbacks under 3%
+        if drawdown < dd_threshold:
+            dd_penalty = eff_drawdown_penalty * (drawdown - dd_threshold)  # Only excess
+        else:
+            dd_penalty = 0.0
 
         # Transaction cost penalty
         tc_penalty = -eff_transaction_penalty * float(transaction_cost) / max(float(self._prev_portfolio_value), 1e-8)
@@ -166,13 +170,20 @@ class DifferentialSharpeReward:
             position_values = np.abs(holdings * prices)
             total_value = max(float(pv), 1e-8)
             max_weight = float(np.max(position_values)) / total_value
-            if max_weight > 0.35:  # Was 0.15 — allow concentrated conviction bets
-                hold_penalty = -eff_holding_penalty * (max_weight - 0.35)
+            if max_weight > 0.60:  # Let winners run — only penalize extreme concentration
+                hold_penalty = -eff_holding_penalty * (max_weight - 0.60)
 
-        # P&L bonus: direct reward for positive returns, penalty for losses.
-        # This complements the Sharpe component (which rewards consistency)
-        # by also rewarding raw profitability.
-        pnl_bonus = eff_pnl_bonus_weight * float(step_return)
+        # P&L bonus with Taleb convexity: asymmetric payoff.
+        # Losses are penalized linearly. Wins are rewarded super-linearly
+        # so outsized gains are disproportionately valuable (let winners win).
+        sr = float(step_return)
+        if sr > 0:
+            # Convex upside: (1 + |return| * 500) makes big wins much more rewarding
+            # +0.05% -> 1.25x, +0.10% -> 1.50x, +0.50% -> 3.50x, +1% -> 6x
+            pnl_bonus = eff_pnl_bonus_weight * sr * (1.0 + abs(sr) * 500.0)
+        else:
+            # Linear downside: losses penalized proportionally, no amplification
+            pnl_bonus = eff_pnl_bonus_weight * sr
 
         # Cash drag penalty — continuous penalty for undeployed capital
         position_value = float(np.sum(np.abs(holdings * prices)))

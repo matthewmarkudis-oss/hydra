@@ -20,9 +20,9 @@ _DEFAULTS = {
     "drawdown_penalty": 0.15,
     "transaction_penalty": 0.01,
     "holding_penalty": 0.02,
-    "pnl_bonus_weight": 5.0,
+    "pnl_bonus_weight": 25.0,
     "reward_scale": 100.0,
-    "cash_drag_penalty": 0.10,
+    "cash_drag_penalty": 0.02,
     "benchmark_bonus_weight": 2.0,
     "min_deployment_pct": 0.10,
     "alpha_target_weight": 3.0,
@@ -33,9 +33,9 @@ _BOUNDS = {
     "drawdown_penalty": (0.0, 1.0),    # Capped at 1.0 — higher values crush the profit signal
     "transaction_penalty": (0.0, 1.0),
     "holding_penalty": (0.0, 1.0),
-    "pnl_bonus_weight": (0.5, 30.0),   # Was 20.0 — allow aggressive P&L targeting
+    "pnl_bonus_weight": (5.0, 50.0),   # Strong P&L signal to overcome penalty landscape
     "reward_scale": (10.0, 500.0),
-    "cash_drag_penalty": (0.05, 2.0),   # Was 1.0 — allow stronger deployment pressure
+    "cash_drag_penalty": (0.005, 0.10),  # Low: nudge deployment, don't drown P&L signal
     "benchmark_bonus_weight": (0.5, 15.0),  # Was 10.0 — allow stronger benchmark targeting
     "min_deployment_pct": (0.05, 0.7),  # Was 0.1 floor — allow lighter deployment in crisis
     "alpha_target_weight": (0.5, 10.0),  # Cumulative alpha vs benchmark

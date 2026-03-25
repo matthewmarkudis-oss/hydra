@@ -569,6 +569,7 @@ def _write_live_state(
             "diagnosis": gen.get("diagnosis"),
             "competition": gen.get("competition"),
             "conviction": gen.get("conviction"),
+            "audit": gen.get("audit"),
         }
         # P&L tracking data (per-agent returns, deployment, trades)
         if gen.get("agent_pnl"):

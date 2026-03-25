@@ -20,7 +20,7 @@ class EnvConfig(BaseModel):
     spread_bps: float = Field(default=1.0, ge=0, description="Bid-ask spread in basis points")
     max_position_pct: float = Field(default=0.40, gt=0, le=1.0)
     max_drawdown_pct: float = Field(default=0.50, gt=0, le=1.0, description="Episode truncates at this drawdown; 0.50 allows learning recovery")
-    max_daily_loss_pct: float = Field(default=0.15, gt=0, le=1.0, description="Episode truncates at this daily loss; 0.15 allows learning from bad days")
+    max_daily_loss_pct: float = Field(default=0.50, gt=0, le=1.0, description="Episode truncates at this daily loss; 0.50 matches drawdown limit")
     normalize_obs: bool = Field(default=True)
 
 
@@ -36,7 +36,7 @@ class DailyEnvConfig(BaseModel):
     spread_bps: float = Field(default=0.5, ge=0, description="Lower spread for daily bars")
     max_position_pct: float = Field(default=0.25, gt=0, le=1.0)
     max_drawdown_pct: float = Field(default=0.50, gt=0, le=1.0)
-    max_daily_loss_pct: float = Field(default=0.15, gt=0, le=1.0)
+    max_daily_loss_pct: float = Field(default=0.50, gt=0, le=1.0)
     normalize_obs: bool = Field(default=True)
 
 

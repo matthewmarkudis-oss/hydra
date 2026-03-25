@@ -47,7 +47,7 @@ class TradingEnv(gym.Env):
         spread_bps: float = 1.0,
         max_position_pct: float = 0.30,
         max_drawdown_pct: float = 0.50,
-        max_daily_loss_pct: float = 0.15,
+        max_daily_loss_pct: float = 0.50,
         sharpe_eta: float = 0.05,
         drawdown_penalty: float = 0.15,
         transaction_penalty: float = 0.01,
@@ -120,6 +120,7 @@ class TradingEnv(gym.Env):
             max_position_pct=max_position_pct,
             max_drawdown_pct=max_drawdown_pct,
             max_daily_loss_pct=max_daily_loss_pct,
+            circuit_breaker_pct=max_daily_loss_pct,  # match daily loss limit
         )
 
         self.action_processor = ActionProcessor(

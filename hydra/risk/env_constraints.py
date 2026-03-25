@@ -49,8 +49,8 @@ class EnvConstraints:
         self,
         max_position_pct: float = 0.10,
         max_drawdown_pct: float = 0.50,
-        max_daily_loss_pct: float = 0.15,
-        circuit_breaker_pct: float = 0.15,
+        max_daily_loss_pct: float = 0.50,
+        circuit_breaker_pct: float = 0.50,
     ):
         self.max_position_pct = np.float32(max_position_pct)
         self.max_drawdown_pct = np.float32(max_drawdown_pct)
